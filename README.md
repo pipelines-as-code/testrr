@@ -1,8 +1,6 @@
-# testrr
+# testrr - Track every test. Catch every regression.
 
 <img width="3034" height="2014" alt="image" src="https://github.com/user-attachments/assets/01c36568-ce91-4382-867f-dadfed6a869a" />
-
-**Track every test. Catch every regression.**
 
 A self-hosted test report hub. Upload JUnit, TRX, or NUnit reports from your CI pipelines and browse pass/fail history, trends, and regressions in one place.
 
