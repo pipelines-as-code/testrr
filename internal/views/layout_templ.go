@@ -31,7 +31,7 @@ func Layout(title string, project *store.Project, content templ.Component) templ
 			templ_7745c5c3_Var1 = templ.NopComponent
 		}
 		ctx = templ.ClearChildren(ctx)
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 1, "<!doctype html><html lang=\"en\" data-theme=\"light\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 1, "<!doctype html><html lang=\"en\" data-theme=\"light\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1, maximum-scale=1, user-scalable=0\"><title>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -44,7 +44,7 @@ func Layout(title string, project *store.Project, content templ.Component) templ
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 2, "</title><link rel=\"stylesheet\" href=\"/assets/app.css\"><script type=\"module\" src=\"/assets/app.js\"></script></head><body><div class=\"drawer lg:drawer-open bg-base-200 min-h-screen\"><input id=\"drawer-toggle\" type=\"checkbox\" class=\"drawer-toggle\"><div class=\"drawer-content flex flex-col\"><!-- Top navbar for mobile --><div class=\"navbar bg-base-100 shadow-sm lg:hidden\"><div class=\"flex-none\"><label for=\"drawer-toggle\" aria-label=\"open sidebar\" class=\"btn btn-square btn-ghost\"><svg xmlns=\"http://www.w3.org/2000/svg\" fill=\"none\" viewBox=\"0 0 24 24\" class=\"inline-block w-6 h-6 stroke-current\"><path stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"2\" d=\"M4 6h16M4 12h16M4 18h16\"></path></svg></label></div><div class=\"flex-1\"><a class=\"btn btn-ghost normal-case text-xl\" href=\"/\">testrr</a></div></div><!-- Main content --><main class=\"flex-1 p-4 lg:p-8\"><div class=\"max-w-7xl mx-auto space-y-6\"><header class=\"mb-8\">")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 2, "</title><link rel=\"stylesheet\" href=\"/assets/app.css\"><script type=\"module\" src=\"/assets/app.js\"></script><script>\n\t\t\t\tif (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {\n\t\t\t\t\tdocument.documentElement.setAttribute('data-theme', 'dark');\n\t\t\t\t}\n\t\t\t\twindow.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', event => {\n\t\t\t\t\tconst newColorScheme = event.matches ? \"dark\" : \"light\";\n\t\t\t\t\tdocument.documentElement.setAttribute('data-theme', newColorScheme);\n\t\t\t\t});\n\t\t\t</script></head><body><div class=\"drawer lg:drawer-open bg-base-200 min-h-screen\"><input id=\"drawer-toggle\" type=\"checkbox\" class=\"drawer-toggle\"><div class=\"drawer-content flex flex-col\"><!-- Top navbar for mobile --><div class=\"navbar bg-base-100 shadow-sm lg:hidden\"><div class=\"flex-none\"><label for=\"drawer-toggle\" aria-label=\"open sidebar\" class=\"btn btn-square btn-ghost\"><svg xmlns=\"http://www.w3.org/2000/svg\" fill=\"none\" viewBox=\"0 0 24 24\" class=\"inline-block w-6 h-6 stroke-current\"><path stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"2\" d=\"M4 6h16M4 12h16M4 18h16\"></path></svg></label></div><div class=\"flex-1\"><a class=\"btn btn-ghost normal-case text-xl\" href=\"/\">testrr</a></div></div><!-- Main content --><main class=\"flex-1 p-4 lg:p-8\"><div class=\"max-w-7xl mx-auto space-y-6\"><header class=\"mb-8\">")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -56,7 +56,7 @@ func Layout(title string, project *store.Project, content templ.Component) templ
 			var templ_7745c5c3_Var3 string
 			templ_7745c5c3_Var3, templ_7745c5c3_Err = templ.JoinStringErrs(project.Name)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/views/layout.templ`, Line: 37, Col: 66}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/views/layout.templ`, Line: 46, Col: 66}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var3))
 			if templ_7745c5c3_Err != nil {
@@ -80,7 +80,7 @@ func Layout(title string, project *store.Project, content templ.Component) templ
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 7, "</div></main></div><!-- Sidebar --><div class=\"drawer-side z-40\"><label for=\"drawer-toggle\" aria-label=\"close sidebar\" class=\"drawer-overlay\"></label><div class=\"menu p-4 w-72 min-h-full bg-base-100 text-base-content border-r border-base-200/50\"><a href=\"/\" class=\"ml-4 mt-2 mb-8 block hover:opacity-80 transition-opacity\"><span class=\"text-2xl font-bold tracking-widest uppercase\">testrr</span><p class=\"text-xs text-base-content/50 mt-0.5 font-medium\">Track every test. Catch every regression.</p></a><ul class=\"menu w-full px-0 gap-1\">")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 7, "</div><footer class=\"footer footer-center p-4 mt-8 border-t border-base-300 text-base-content/60\"><aside class=\"flex flex-row flex-wrap items-center justify-center gap-x-2 gap-y-1\"><p>Copyright © 2026 - Provided by <a href=\"https://tektoncd.org\" class=\"link link-hover font-semibold\">TektonCD</a> <a href=\"https://pipelinesascode.com\" class=\"link link-hover font-semibold\">Pipelines as Code</a></p><span class=\"hidden sm:inline\">|</span> <a href=\"https://github.com/pipelines-as-code/testrr\" class=\"link link-hover flex items-center gap-1\"><svg xmlns=\"http://www.w3.org/2000/svg\" width=\"16\" height=\"16\" fill=\"currentColor\" viewBox=\"0 0 16 16\"><path d=\"M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.012 8.012 0 0 0 16 8c0-4.42-3.58-8-8-8z\"></path></svg> GitHub</a></aside></footer></main></div><!-- Sidebar --><div class=\"drawer-side z-40\"><label for=\"drawer-toggle\" aria-label=\"close sidebar\" class=\"drawer-overlay\"></label><div class=\"menu p-4 w-72 min-h-full bg-base-100 text-base-content border-r border-base-200/50\"><a href=\"/\" class=\"ml-4 mt-2 mb-8 block hover:opacity-80 transition-opacity\"><span class=\"text-2xl font-bold tracking-widest uppercase\">testrr</span><p class=\"text-xs text-base-content/50 mt-0.5 font-medium\">Track every test. Catch every regression.</p></a><ul class=\"menu w-full px-0 gap-1\">")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -92,7 +92,7 @@ func Layout(title string, project *store.Project, content templ.Component) templ
 			var templ_7745c5c3_Var4 string
 			templ_7745c5c3_Var4, templ_7745c5c3_Err = templ.JoinStringErrs(project.Name)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/views/layout.templ`, Line: 59, Col: 133}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/views/layout.templ`, Line: 78, Col: 133}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var4))
 			if templ_7745c5c3_Err != nil {
@@ -105,7 +105,7 @@ func Layout(title string, project *store.Project, content templ.Component) templ
 			var templ_7745c5c3_Var5 templ.SafeURL
 			templ_7745c5c3_Var5, templ_7745c5c3_Err = templ.JoinURLErrs(templ.URL("/projects/" + project.Slug))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/views/layout.templ`, Line: 60, Col: 60}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/views/layout.templ`, Line: 79, Col: 60}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var5))
 			if templ_7745c5c3_Err != nil {
@@ -118,7 +118,7 @@ func Layout(title string, project *store.Project, content templ.Component) templ
 			var templ_7745c5c3_Var6 templ.SafeURL
 			templ_7745c5c3_Var6, templ_7745c5c3_Err = templ.JoinURLErrs(templ.URL("/projects/" + project.Slug + "/runs"))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/views/layout.templ`, Line: 61, Col: 70}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/views/layout.templ`, Line: 80, Col: 70}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var6))
 			if templ_7745c5c3_Err != nil {
