@@ -3,7 +3,7 @@ BIN_DIR := bin
 BIN := $(BIN_DIR)/$(APP)
 TEMPL_CMD := go run github.com/a-h/templ/cmd/templ@v0.3.1001
 
-.PHONY: help deps generate assets fmt lint test build run clean check sample-upload
+.PHONY: help deps generate assets fmt lint test build e2e run clean check sample-upload
 
 help:
 	@printf "%s\n" \
@@ -15,6 +15,7 @@ help:
 		"  make lint      - run Go vet and TypeScript checks" \
 		"  make test      - run the Go test suite" \
 		"  make build     - build the testrr binary" \
+		"  make e2e       - run the CLI/server smoke test against a real binary" \
 		"  make run       - run the server locally" \
 		"  make sample-upload - create sample projects and upload sample timelines" \
 		"  make clean     - remove built artifacts" \
@@ -43,6 +44,9 @@ test: generate assets
 build: generate assets
 	mkdir -p $(BIN_DIR)
 	go build -o $(BIN) ./cmd/testrr
+
+e2e: build
+	bash hack/ci-e2e.sh
 
 run: generate assets
 	go run ./cmd/testrr serve

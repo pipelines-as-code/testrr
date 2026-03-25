@@ -159,6 +159,134 @@ func TestServerAPIUploadGoTestJSON(t *testing.T) {
 	}
 }
 
+func TestServerAPIUploadAggregatesMultipleReportFormats(t *testing.T) {
+	t.Parallel()
+
+	serverURL, cleanup := newTestServer(t)
+	defer cleanup()
+
+	junitContents, err := os.ReadFile(filepath.Join("..", "..", "testdata", "junit-mixed.xml"))
+	if err != nil {
+		t.Fatalf("read junit fixture: %v", err)
+	}
+	goJSONContents, err := os.ReadFile(filepath.Join("..", "..", "testdata", "go-test-sample.json"))
+	if err != nil {
+		t.Fatalf("read go test json fixture: %v", err)
+	}
+
+	client := &http.Client{}
+	uploadResp, err := postMultipartFilesWithBasicAuth(client, serverURL+"/api/v1/projects/demo/runs", "demo-user", "secret", map[string]string{
+		"branch":    "main",
+		"run_label": "mixed-upload",
+	}, []multipartUploadFile{
+		{Name: "junit-mixed.xml", Contents: junitContents},
+		{Name: "go-test-sample.json", Contents: goJSONContents},
+	})
+	if err != nil {
+		t.Fatalf("api upload: %v", err)
+	}
+	defer uploadResp.Body.Close()
+	if uploadResp.StatusCode != http.StatusCreated {
+		t.Fatalf("expected created response, got %d", uploadResp.StatusCode)
+	}
+
+	var created store.Run
+	if err := json.NewDecoder(uploadResp.Body).Decode(&created); err != nil {
+		t.Fatalf("decode created run: %v", err)
+	}
+	if created.TotalCount != 6 || created.PassedCount != 2 || created.FailedCount != 3 || created.SkippedCount != 1 {
+		t.Fatalf("unexpected aggregate counts: %+v", created)
+	}
+
+	request, err := http.NewRequest(http.MethodGet, serverURL+"/api/v1/projects/demo/runs/"+created.ID, nil)
+	if err != nil {
+		t.Fatalf("new get run request: %v", err)
+	}
+	request.SetBasicAuth("demo-user", "secret")
+	runResp, err := client.Do(request)
+	if err != nil {
+		t.Fatalf("get run: %v", err)
+	}
+	defer runResp.Body.Close()
+	if runResp.StatusCode != http.StatusOK {
+		t.Fatalf("expected ok run response, got %d", runResp.StatusCode)
+	}
+
+	var runPayload struct {
+		Run     store.Run          `json:"run"`
+		Results []store.TestResult `json:"results"`
+	}
+	if err := json.NewDecoder(runResp.Body).Decode(&runPayload); err != nil {
+		t.Fatalf("decode run payload: %v", err)
+	}
+	if len(runPayload.Results) != 6 {
+		t.Fatalf("expected 6 results, got %d", len(runPayload.Results))
+	}
+	foundSkip := false
+	foundGoTestFailure := false
+	for _, result := range runPayload.Results {
+		if result.Status == "skipped" {
+			foundSkip = true
+		}
+		if result.TestName == "TestParseFail" && result.Status == "failed" {
+			foundGoTestFailure = true
+		}
+	}
+	if !foundSkip || !foundGoTestFailure {
+		t.Fatalf("expected mixed run payload to include skipped junit and failed go test results, got %+v", runPayload.Results)
+	}
+}
+
+func TestServerAPIUploadFailedImportCreatesFailedRun(t *testing.T) {
+	t.Parallel()
+
+	serverURL, cleanup := newTestServer(t)
+	defer cleanup()
+
+	client := &http.Client{}
+	uploadResp, err := postMultipartContentsWithBasicAuth(client, serverURL+"/api/v1/projects/demo/runs", "demo-user", "secret", map[string]string{
+		"branch":    "main",
+		"run_label": "broken-upload",
+	}, "broken.xml", []byte("<testsuites><testsuite>"))
+	if err != nil {
+		t.Fatalf("api upload: %v", err)
+	}
+	defer uploadResp.Body.Close()
+	if uploadResp.StatusCode != http.StatusCreated {
+		t.Fatalf("expected created response, got %d", uploadResp.StatusCode)
+	}
+
+	var created store.Run
+	if err := json.NewDecoder(uploadResp.Body).Decode(&created); err != nil {
+		t.Fatalf("decode created run: %v", err)
+	}
+	if created.Status != "failed_import" {
+		t.Fatalf("expected failed import status, got %+v", created)
+	}
+	if created.TotalCount != 0 || created.PassedCount != 0 || created.FailedCount != 0 || created.SkippedCount != 0 {
+		t.Fatalf("expected failed import to avoid storing test counts, got %+v", created)
+	}
+
+	request, err := http.NewRequest(http.MethodGet, serverURL+"/api/v1/projects/demo/runs?branch=main", nil)
+	if err != nil {
+		t.Fatalf("new list request: %v", err)
+	}
+	request.SetBasicAuth("demo-user", "secret")
+	listResp, err := client.Do(request)
+	if err != nil {
+		t.Fatalf("list runs: %v", err)
+	}
+	defer listResp.Body.Close()
+
+	var runs []store.Run
+	if err := json.NewDecoder(listResp.Body).Decode(&runs); err != nil {
+		t.Fatalf("decode runs: %v", err)
+	}
+	if len(runs) != 1 || runs[0].Status != "failed_import" {
+		t.Fatalf("expected failed import run in listing, got %+v", runs)
+	}
+}
+
 func TestServerRunPageAndTestHistoryRenderE2EOutput(t *testing.T) {
 	t.Parallel()
 
@@ -349,7 +477,19 @@ func postMultipartWithBasicAuth(client *http.Client, endpoint, username, passwor
 	return postMultipartContentsWithBasicAuth(client, endpoint, username, password, fields, filepath.Base(fixturePath), fileContents)
 }
 
+type multipartUploadFile struct {
+	Name     string
+	Contents []byte
+}
+
 func postMultipartContentsWithBasicAuth(client *http.Client, endpoint, username, password string, fields map[string]string, fileName string, fileContents []byte) (*http.Response, error) {
+	return postMultipartFilesWithBasicAuth(client, endpoint, username, password, fields, []multipartUploadFile{{
+		Name:     fileName,
+		Contents: fileContents,
+	}})
+}
+
+func postMultipartFilesWithBasicAuth(client *http.Client, endpoint, username, password string, fields map[string]string, files []multipartUploadFile) (*http.Response, error) {
 	var body bytes.Buffer
 	writer := multipart.NewWriter(&body)
 	for key, value := range fields {
@@ -357,12 +497,14 @@ func postMultipartContentsWithBasicAuth(client *http.Client, endpoint, username,
 			return nil, err
 		}
 	}
-	fileWriter, err := writer.CreateFormFile("files", fileName)
-	if err != nil {
-		return nil, err
-	}
-	if _, err := fileWriter.Write(fileContents); err != nil {
-		return nil, err
+	for _, file := range files {
+		fileWriter, err := writer.CreateFormFile("files", file.Name)
+		if err != nil {
+			return nil, err
+		}
+		if _, err := fileWriter.Write(file.Contents); err != nil {
+			return nil, err
+		}
 	}
 	if err := writer.Close(); err != nil {
 		return nil, err
