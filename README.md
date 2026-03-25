@@ -31,6 +31,23 @@ docker exec -i testrr testrr project create \
   --password-stdin <<< "secret"
 ```
 
+### systemd with Podman
+
+The sample unit at [`systemd/testrr.service`](/Users/chmouel/git/work/testrr/systemd/testrr.service) stores persistent data in `/var/lib/testrr/data` and is meant to run as a system-wide Podman service.
+
+The service intentionally avoids extra systemd sandbox directives because Podman needs access to its own runtime and storage paths under `/run` and `/var/lib/containers`.
+
+
+Create the data directory before starting the service:
+
+```sh
+sudo mkdir -p /var/lib/testrr/data
+sudo chown 1000:1000 /var/lib/testrr/data
+sudo cp systemd/testrr.service /etc/systemd/system/testrr.service
+sudo systemctl daemon-reload
+sudo systemctl enable --now testrr.service
+```
+
 ## Quick start (local dev)
 
 ```sh

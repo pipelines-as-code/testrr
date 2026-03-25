@@ -10,12 +10,12 @@ Type=simple
 Restart=on-failure
 RestartSec=5s
 
-# Runtime directory for the data volume — adjust to taste
+# Runtime directory for the data volume — ensure it exists and is writable
 Environment=TESTRR_DATA_DIR=/var/lib/testrr/data
-Environment=TESTRR_ADDR=:8080
+Environment=TESTRR_ADDR=:3842
 
 # Pull image from GHCR — set your image here
-Environment=TESTRR_IMAGE=ghcr.io/your-org/testrr:latest
+Environment=TESTRR_IMAGE=ghcr.io/pipelines-as-code/testrr:latest
 
 ExecStartPre=-/usr/bin/podman rm -f testrr
 ExecStart=/usr/bin/podman run \
@@ -30,41 +30,14 @@ ExecStart=/usr/bin/podman run \
     --env TESTRR_ADDR=${TESTRR_ADDR} \
     --env TESTRR_DATA_DIR=/home/testrr/data \
     \
-    --user 1000:1000 \
-    --userns=keep-id \
-    \
-    --cap-drop=ALL \
-    --security-opt=no-new-privileges \
-    --security-opt=label=type:container_runtime_t \
-    --read-only \
-    --tmpfs /tmp:rw,noexec,nosuid,size=64m \
-    \
     ${TESTRR_IMAGE}
 
 ExecStop=/usr/bin/podman stop testrr
 
-# --- systemd hardening ---
-NoNewPrivileges=yes
+# Podman already provides container isolation. Additional systemd sandboxing
+# tends to break rootful Podman by blocking access to /run/libpod and
+# /var/lib/containers.
 PrivateTmp=yes
-PrivateDevices=yes
-ProtectSystem=strict
-ProtectHome=yes
-ProtectKernelTunables=yes
-ProtectKernelModules=yes
-ProtectKernelLogs=yes
-ProtectControlGroups=yes
-ProtectHostname=yes
-ProtectClock=yes
-RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
-RestrictNamespaces=yes
-RestrictRealtime=yes
-RestrictSUIDSGID=yes
-LockPersonality=yes
-MemoryDenyWriteExecute=no
-SystemCallFilter=@system-service
-SystemCallErrorNumber=EPERM
-ReadWritePaths=/var/lib/testrr/data
-ReadOnlyPaths=/
 
 [Install]
 WantedBy=multi-user.target
