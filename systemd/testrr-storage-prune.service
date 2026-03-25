@@ -9,4 +9,5 @@ Environment=TESTRR_DATA_DIR=/var/lib/testrr/data
 Environment=TESTRR_IMAGE=ghcr.io/pipelines-as-code/testrr:latest
 Environment=TESTRR_OUTPUT_RETENTION_DAYS=30
 
-ExecStart=/usr/bin/podman run --name testrr-storage-prune --rm --pull=never --network=none --volume /var/lib/testrr/data:/home/testrr/data:z,rw --env TESTRR_DATA_DIR=/home/testrr/data --env TESTRR_OUTPUT_RETENTION_DAYS=30 ghcr.io/pipelines-as-code/testrr:latest storage prune
+ExecStartPre=-/usr/bin/podman rm -f testrr-storage-prune
+ExecStart=/usr/bin/podman run --name testrr-storage-prune --rm --pull=never --network=none --volume /var/lib/testrr/data:/home/testrr/data:z,rw --env TESTRR_DATA_DIR=/home/testrr/data --env TESTRR_OUTPUT_RETENTION_DAYS=30 --entrypoint testrr ghcr.io/pipelines-as-code/testrr:latest storage prune
