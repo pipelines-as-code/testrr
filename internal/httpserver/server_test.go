@@ -258,11 +258,39 @@ func TestGroupRunResultsUsesDeterministicBuckets(t *testing.T) {
 	if len(groups) != 3 {
 		t.Fatalf("expected 3 groups, got %d", len(groups))
 	}
-	if groups[0].Name != "fallback.xml" || groups[1].Name != "suite-a" || groups[2].Name != "suite-b" {
+	if groups[0].Name != "suite-b" || groups[1].Name != "suite-a" || groups[2].Name != "fallback.xml" {
 		t.Fatalf("unexpected group order: %+v", groups)
 	}
 	if len(groups[1].Results) != 1 || len(groups[1].Results[0].RecentStatuses) != 2 {
 		t.Fatalf("expected recent statuses to be attached to grouped result, got %+v", groups[1].Results)
+	}
+}
+
+func TestSortRunResults(t *testing.T) {
+	results := []store.TestResult{
+		{TestKey: "a", SuiteName: "suite-b", TestName: "Bravo", Status: "passed", DurationMillis: 10},
+		{TestKey: "b", SuiteName: "suite-a", TestName: "Alpha", Status: "failed", DurationMillis: 50},
+		{TestKey: "c", SuiteName: "suite-a", TestName: "Charlie", Status: "skipped", DurationMillis: 20},
+	}
+
+	slowest := sortRunResults(results, "slowest")
+	if slowest[0].TestKey != "b" || slowest[1].TestKey != "c" || slowest[2].TestKey != "a" {
+		t.Fatalf("unexpected slowest order: %+v", slowest)
+	}
+
+	byStatus := sortRunResults(results, "status")
+	if byStatus[0].TestKey != "b" || byStatus[1].TestKey != "c" || byStatus[2].TestKey != "a" {
+		t.Fatalf("unexpected status order: %+v", byStatus)
+	}
+
+	byName := sortRunResults(results, "name")
+	if byName[0].TestKey != "b" || byName[1].TestKey != "a" || byName[2].TestKey != "c" {
+		t.Fatalf("unexpected name order: %+v", byName)
+	}
+
+	uploaded := sortRunResults(results, "uploaded")
+	if uploaded[0].TestKey != "b" || uploaded[1].TestKey != "c" || uploaded[2].TestKey != "a" {
+		t.Fatalf("unexpected uploaded order: %+v", uploaded)
 	}
 }
 

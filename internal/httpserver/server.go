@@ -2,6 +2,7 @@ package httpserver
 
 import (
 	"bytes"
+	"cmp"
 	"compress/gzip"
 	"context"
 	"crypto/rand"
@@ -16,7 +17,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -132,9 +133,11 @@ func (s *Server) handleRunPage(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unable to load run results", http.StatusInternalServerError)
 		return
 	}
+	sortKey := normalizeRunSort(r.URL.Query().Get("sort"))
+	sortedResults := sortRunResults(results, sortKey)
 	testKeys := make([]string, 0, len(results))
 	seen := make(map[string]struct{}, len(results))
-	for _, result := range results {
+	for _, result := range sortedResults {
 		if _, ok := seen[result.TestKey]; ok {
 			continue
 		}
@@ -146,7 +149,7 @@ func (s *Server) handleRunPage(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unable to load run history", http.StatusInternalServerError)
 		return
 	}
-	s.render(w, http.StatusOK, views.RunPage(project, run, groupRunResults(results, recentStatuses)))
+	s.render(w, http.StatusOK, views.RunPage(project, run, groupRunResults(sortedResults, recentStatuses), sortKey))
 }
 
 func (s *Server) handleTestPage(w http.ResponseWriter, r *http.Request) {
@@ -492,7 +495,6 @@ func groupRunResults(results []store.TestResult, recentStatuses map[string][]str
 		})
 	}
 
-	sort.Strings(order)
 	groups := make([]views.RunResultGroup, 0, len(order))
 	for _, groupName := range order {
 		groups = append(groups, views.RunResultGroup{
@@ -501,6 +503,70 @@ func groupRunResults(results []store.TestResult, recentStatuses map[string][]str
 		})
 	}
 	return groups
+}
+
+func normalizeRunSort(sortKey string) string {
+	switch strings.TrimSpace(sortKey) {
+	case "name", "status", "slowest":
+		return sortKey
+	default:
+		return "uploaded"
+	}
+}
+
+func sortRunResults(results []store.TestResult, sortKey string) []store.TestResult {
+	sorted := append([]store.TestResult(nil), results...)
+	slices.SortStableFunc(sorted, func(a, b store.TestResult) int {
+		switch sortKey {
+		case "name":
+			if diff := cmp.Compare(strings.ToLower(a.TestName), strings.ToLower(b.TestName)); diff != 0 {
+				return diff
+			}
+		case "status":
+			if diff := cmp.Compare(runStatusRank(a.Status), runStatusRank(b.Status)); diff != 0 {
+				return diff
+			}
+			if diff := cmp.Compare(strings.ToLower(a.TestName), strings.ToLower(b.TestName)); diff != 0 {
+				return diff
+			}
+		case "slowest":
+			if a.DurationMillis != b.DurationMillis {
+				if a.DurationMillis > b.DurationMillis {
+					return -1
+				}
+				return 1
+			}
+			if diff := cmp.Compare(strings.ToLower(a.TestName), strings.ToLower(b.TestName)); diff != 0 {
+				return diff
+			}
+		default:
+			if diff := cmp.Compare(strings.ToLower(a.SuiteName), strings.ToLower(b.SuiteName)); diff != 0 {
+				return diff
+			}
+			if diff := cmp.Compare(strings.ToLower(a.FileName), strings.ToLower(b.FileName)); diff != 0 {
+				return diff
+			}
+			if diff := cmp.Compare(strings.ToLower(a.ClassName), strings.ToLower(b.ClassName)); diff != 0 {
+				return diff
+			}
+			if diff := cmp.Compare(strings.ToLower(a.TestName), strings.ToLower(b.TestName)); diff != 0 {
+				return diff
+			}
+		}
+		return cmp.Compare(a.TestKey, b.TestKey)
+	})
+	return sorted
+}
+
+func runStatusRank(status string) int {
+	switch status {
+	case "failed":
+		return 0
+	case "skipped":
+		return 1
+	default:
+		return 2
+	}
 }
 
 func sanitizeFileName(value string) string {

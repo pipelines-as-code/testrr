@@ -16,9 +16,14 @@ templ TestPage(project store.Project, testKey string, history []store.TestHistor
 templ TestContent(project store.Project, testKey string, history []store.TestHistoryEntry) {
 	<section class="card bg-base-100 shadow-xl border border-base-200">
 		<div class="card-body p-4 sm:p-6 lg:p-8">
-			<div class="mb-8">
-				<p class="text-sm font-semibold uppercase tracking-wider text-base-content/60 mb-1">Test history</p>
-				<h2 class="text-2xl font-bold font-mono break-all">{ testKey }</h2>
+			<div class="mb-8 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+				<div>
+					<p class="text-sm font-semibold uppercase tracking-wider text-base-content/60 mb-1">Test history</p>
+					<h2 class="text-2xl font-bold font-mono break-all">{ testKey }</h2>
+				</div>
+				<div class="shrink-0">
+					@OutputVisibilityToggle()
+				</div>
 			</div>
 
 			<div class="min-h-[280px] w-full bg-base-200/50 rounded-2xl border border-base-300 p-2 mb-8" data-chart-endpoint={ testDurationChartURL(project.Slug, testKey) } data-chart-kind="test-duration"></div>
@@ -58,11 +63,13 @@ templ TestContent(project store.Project, testKey string, history []store.TestHis
 												{ entry.FailureMessage }
 											</div>
 										}
-										@OutputBlock("Failure output", entry.FailureOutput)
-										@OutputBlock("Stdout", entry.SystemOut)
-										@OutputBlock("Stderr", entry.SystemErr)
-									</td>
-								</tr>
+											<div data-output-block hidden>
+												@OutputBlock("Failure output", entry.FailureOutput)
+												@OutputBlock("Stdout", entry.SystemOut)
+												@OutputBlock("Stderr", entry.SystemErr)
+											</div>
+										</td>
+									</tr>
 							}
 						}
 						if len(history) == 0 {

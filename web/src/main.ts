@@ -20,7 +20,44 @@ declare global {
   }
 }
 
+const outputPreferenceCookie = "testrr_show_output";
+
 window.htmx = htmx;
+
+function readCookie(name: string): string | null {
+  const prefix = `${name}=`;
+  for (const chunk of document.cookie.split(";")) {
+    const value = chunk.trim();
+    if (value.startsWith(prefix)) {
+      return value.slice(prefix.length);
+    }
+  }
+  return null;
+}
+
+function readOutputPreference(): boolean {
+  return readCookie(outputPreferenceCookie) === "1";
+}
+
+function writeOutputPreference(show: boolean): void {
+  document.cookie = `${outputPreferenceCookie}=${show ? "1" : "0"}; Path=/; Max-Age=31536000; SameSite=Lax`;
+}
+
+function applyOutputVisibility(root: ParentNode = document): void {
+  const showOutput = readOutputPreference();
+  const outputBlocks = Array.from(root.querySelectorAll<HTMLElement>("[data-output-block]"));
+  for (const block of outputBlocks) {
+    block.hidden = !showOutput;
+  }
+
+  const toggles = Array.from(root.querySelectorAll<HTMLButtonElement>("[data-output-toggle]"));
+  for (const toggle of toggles) {
+    const showLabel = toggle.dataset.showLabel ?? "Show Output";
+    const hideLabel = toggle.dataset.hideLabel ?? "Hide Output";
+    toggle.textContent = showOutput ? hideLabel : showLabel;
+    toggle.setAttribute("aria-pressed", String(showOutput));
+  }
+}
 
 async function renderCharts(root: ParentNode = document): Promise<void> {
   const nodes = Array.from(root.querySelectorAll<HTMLElement>("[data-chart-endpoint]"));
@@ -112,12 +149,27 @@ async function renderCharts(root: ParentNode = document): Promise<void> {
 }
 
 document.addEventListener("DOMContentLoaded", () => {
+  applyOutputVisibility();
   void renderCharts();
 });
 
 document.body.addEventListener("htmx:afterSwap", (event) => {
   const target = event.target;
   if (target instanceof HTMLElement) {
+    applyOutputVisibility(target);
     void renderCharts(target);
   }
+});
+
+document.body.addEventListener("click", (event) => {
+  const target = event.target;
+  if (!(target instanceof HTMLElement)) {
+    return;
+  }
+  const toggle = target.closest<HTMLElement>("[data-output-toggle]");
+  if (!toggle) {
+    return;
+  }
+  writeOutputPreference(!readOutputPreference());
+  applyOutputVisibility();
 });

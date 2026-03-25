@@ -45,12 +45,12 @@ func Run(ctx context.Context, args []string) error {
 				return err
 			}
 		}
-			server, err := httpserver.New(cfg, repository, parser.NewRegistry(
-				parser.NewJUnitParser(),
-				parser.NewTRXParser(),
-				parser.NewNUnitParser(),
-				parser.NewGoTestJSONParser(),
-			))
+		server, err := httpserver.New(cfg, repository, parser.NewRegistry(
+			parser.NewJUnitParser(),
+			parser.NewTRXParser(),
+			parser.NewNUnitParser(),
+			parser.NewGoTestJSONParser(),
+		))
 		if err != nil {
 			return err
 		}
@@ -59,7 +59,7 @@ func Run(ctx context.Context, args []string) error {
 			Handler:           server,
 			ReadHeaderTimeout: 10 * time.Second,
 		}
-		log.Printf("testrr: starting server addr=%s data_dir=%s database=%s", cfg.Addr, cfg.DataDir, cfg.DatabaseURL)
+		log.Printf("testrr: starting server on http://localhost%s data_dir=%s database=%s", cfg.Addr, cfg.DataDir, cfg.DatabaseURL)
 		return httpServer.ListenAndServe()
 	case "migrate":
 		return repository.Migrate(ctx)
