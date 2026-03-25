@@ -52,7 +52,11 @@ jobs:
 
       - name: Upload test results to testrr
         if: always()
-        run: ./hack/upload-testrr.sh /tmp/testrr-ci/go-test.json
+        shell: bash
+        run: |
+          if ! ./hack/upload-testrr.sh /tmp/testrr-ci/go-test.json; then
+            echo "::warning::testrr upload failed; continuing without failing CI"
+          fi
 
       - name: Fail workflow if tests failed
         if: steps.tests.outputs.test_status != '0'
