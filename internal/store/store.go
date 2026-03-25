@@ -19,6 +19,7 @@ var ErrNotFound = errors.New("not found")
 type Repository interface {
 	Close() error
 	Migrate(context.Context) error
+	Compact(context.Context) error
 	CreateProject(context.Context, CreateProjectInput) (Project, error)
 	RotateProjectCredential(context.Context, string, string, string) error
 	ListProjects(context.Context) ([]Project, error)
@@ -36,6 +37,7 @@ type Repository interface {
 	GetRecentTestStatuses(context.Context, string, string, []string, int) (map[string][]string, error)
 	GetFlakyTests(context.Context, string, string, int) ([]FlakyTest, error)
 	GetSlowestTests(context.Context, string, string, int) ([]SlowTest, error)
+	PruneTestOutputs(context.Context, time.Time) (int64, error)
 }
 
 type SQLStore struct {
@@ -201,6 +203,19 @@ func Open(ctx context.Context, databaseURL string) (*SQLStore, error) {
 		db.Close()
 		return nil, fmt.Errorf("ping database: %w", err)
 	}
+	if dialect == "sqlite" {
+		for _, statement := range []string{
+			`PRAGMA journal_mode=WAL;`,
+			`PRAGMA synchronous=NORMAL;`,
+			`PRAGMA busy_timeout=5000;`,
+			`PRAGMA wal_autocheckpoint=1000;`,
+		} {
+			if _, err := db.ExecContext(ctx, statement); err != nil {
+				db.Close()
+				return nil, fmt.Errorf("configure sqlite: %w", err)
+			}
+		}
+	}
 
 	return &SQLStore{db: db, dialect: dialect}, nil
 }
@@ -238,6 +253,9 @@ func (s *SQLStore) Migrate(ctx context.Context) error {
 		if _, err := s.db.ExecContext(ctx, statement); err != nil {
 			return fmt.Errorf("run migration: %w", err)
 		}
+	}
+	if err := s.backfillLegacyTestResultOutputs(ctx); err != nil {
+		return err
 	}
 	return nil
 }
@@ -446,8 +464,8 @@ func (s *SQLStore) CreateRun(ctx context.Context, input CreateRunInput) (Run, er
 		if _, err := tx.ExecContext(ctx, s.rebind(`
 			INSERT INTO test_results (
 				id, run_id, project_id, test_key, suite_name, package_name, class_name, test_name, file_name,
-				status, duration_millis, failure_message, failure_output, system_out, system_err, regression
-			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+				status, duration_millis, failure_message, regression
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		`),
 			result.ID,
 			result.RunID,
@@ -461,12 +479,12 @@ func (s *SQLStore) CreateRun(ctx context.Context, input CreateRunInput) (Run, er
 			result.Status,
 			result.DurationMillis,
 			result.FailureMessage,
-			result.FailureOutput,
-			result.SystemOut,
-			result.SystemErr,
 			boolToInt(result.Regression),
 		); err != nil {
 			return Run{}, fmt.Errorf("insert test result: %w", err)
+		}
+		if err := s.insertTestResultOutput(ctx, tx, result); err != nil {
+			return Run{}, err
 		}
 	}
 
@@ -502,10 +520,11 @@ func (s *SQLStore) GetRun(ctx context.Context, projectID, runID string) (Run, er
 
 func (s *SQLStore) ListRunResults(ctx context.Context, runID string) ([]TestResult, error) {
 	rows, err := s.db.QueryContext(ctx, s.rebind(`
-		SELECT id, run_id, project_id, test_key, suite_name, package_name, class_name, test_name, file_name,
-			status, duration_millis, failure_message, failure_output, system_out, system_err, regression
-		FROM test_results
-		WHERE run_id = ?
+		SELECT tr.id, tr.run_id, tr.project_id, tr.test_key, tr.suite_name, tr.package_name, tr.class_name, tr.test_name, tr.file_name,
+			tr.status, tr.duration_millis, tr.failure_message, tro.failure_output, tro.system_out, tro.system_err, tr.regression
+		FROM test_results tr
+		LEFT JOIN test_result_outputs tro ON tro.test_result_id = tr.id
+		WHERE tr.run_id = ?
 		ORDER BY status DESC, test_name
 	`), runID)
 	if err != nil {
@@ -517,6 +536,9 @@ func (s *SQLStore) ListRunResults(ctx context.Context, runID string) ([]TestResu
 	for rows.Next() {
 		var result TestResult
 		var regression int
+		var failureOutput []byte
+		var systemOut []byte
+		var systemErr []byte
 		if err := rows.Scan(
 			&result.ID,
 			&result.RunID,
@@ -530,11 +552,20 @@ func (s *SQLStore) ListRunResults(ctx context.Context, runID string) ([]TestResu
 			&result.Status,
 			&result.DurationMillis,
 			&result.FailureMessage,
-			&result.FailureOutput,
-			&result.SystemOut,
-			&result.SystemErr,
+			&failureOutput,
+			&systemOut,
+			&systemErr,
 			&regression,
 		); err != nil {
+			return nil, err
+		}
+		if result.FailureOutput, err = decompressOutput(failureOutput); err != nil {
+			return nil, err
+		}
+		if result.SystemOut, err = decompressOutput(systemOut); err != nil {
+			return nil, err
+		}
+		if result.SystemErr, err = decompressOutput(systemErr); err != nil {
 			return nil, err
 		}
 		result.Regression = regression == 1
@@ -614,9 +645,10 @@ func (s *SQLStore) GetChartSummary(ctx context.Context, projectID, branch string
 
 func (s *SQLStore) GetTestHistory(ctx context.Context, projectID, testKey string, limit int) ([]TestHistoryEntry, error) {
 	rows, err := s.db.QueryContext(ctx, s.rebind(`
-		SELECT r.id, r.run_label, r.branch, tr.status, tr.duration_millis, r.uploaded_at, tr.failure_message, tr.failure_output, tr.system_out, tr.system_err
+		SELECT r.id, r.run_label, r.branch, tr.status, tr.duration_millis, r.uploaded_at, tr.failure_message, tro.failure_output, tro.system_out, tro.system_err
 		FROM test_results tr
 		INNER JOIN runs r ON r.id = tr.run_id
+		LEFT JOIN test_result_outputs tro ON tro.test_result_id = tr.id
 		WHERE tr.project_id = ? AND tr.test_key = ?
 		ORDER BY r.uploaded_at DESC
 		LIMIT ?
@@ -630,6 +662,9 @@ func (s *SQLStore) GetTestHistory(ctx context.Context, projectID, testKey string
 	for rows.Next() {
 		var entry TestHistoryEntry
 		var uploadedAt string
+		var failureOutput []byte
+		var systemOut []byte
+		var systemErr []byte
 		if err := rows.Scan(
 			&entry.RunID,
 			&entry.RunLabel,
@@ -638,13 +673,22 @@ func (s *SQLStore) GetTestHistory(ctx context.Context, projectID, testKey string
 			&entry.DurationMillis,
 			&uploadedAt,
 			&entry.FailureMessage,
-			&entry.FailureOutput,
-			&entry.SystemOut,
-			&entry.SystemErr,
+			&failureOutput,
+			&systemOut,
+			&systemErr,
 		); err != nil {
 			return nil, err
 		}
 		entry.UploadedAt = parseTime(uploadedAt)
+		if entry.FailureOutput, err = decompressOutput(failureOutput); err != nil {
+			return nil, err
+		}
+		if entry.SystemOut, err = decompressOutput(systemOut); err != nil {
+			return nil, err
+		}
+		if entry.SystemErr, err = decompressOutput(systemErr); err != nil {
+			return nil, err
+		}
 		history = append(history, entry)
 	}
 	return history, rows.Err()
@@ -789,10 +833,13 @@ var sqliteMigrations = []string{
 		status TEXT NOT NULL,
 		duration_millis INTEGER NOT NULL,
 		failure_message TEXT NOT NULL DEFAULT '',
-		failure_output TEXT NOT NULL DEFAULT '',
-		system_out TEXT NOT NULL DEFAULT '',
-		system_err TEXT NOT NULL DEFAULT '',
 		regression INTEGER NOT NULL DEFAULT 0
+	);`,
+	`CREATE TABLE IF NOT EXISTS test_result_outputs (
+		test_result_id TEXT PRIMARY KEY REFERENCES test_results(id) ON DELETE CASCADE,
+		failure_output BLOB,
+		system_out BLOB,
+		system_err BLOB
 	);`,
 	`CREATE INDEX IF NOT EXISTS test_results_run_idx ON test_results(run_id);`,
 	`CREATE INDEX IF NOT EXISTS test_results_project_key_idx ON test_results(project_id, test_key);`,
@@ -856,10 +903,13 @@ var postgresMigrations = []string{
 		status TEXT NOT NULL,
 		duration_millis BIGINT NOT NULL,
 		failure_message TEXT NOT NULL DEFAULT '',
-		failure_output TEXT NOT NULL DEFAULT '',
-		system_out TEXT NOT NULL DEFAULT '',
-		system_err TEXT NOT NULL DEFAULT '',
 		regression INTEGER NOT NULL DEFAULT 0
+	);`,
+	`CREATE TABLE IF NOT EXISTS test_result_outputs (
+		test_result_id TEXT PRIMARY KEY REFERENCES test_results(id) ON DELETE CASCADE,
+		failure_output BYTEA,
+		system_out BYTEA,
+		system_err BYTEA
 	);`,
 	`CREATE INDEX IF NOT EXISTS test_results_run_idx ON test_results(run_id);`,
 	`CREATE INDEX IF NOT EXISTS test_results_project_key_idx ON test_results(project_id, test_key);`,

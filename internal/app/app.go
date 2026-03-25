@@ -65,6 +65,8 @@ func Run(ctx context.Context, args []string) error {
 		return repository.Migrate(ctx)
 	case "project":
 		return runProjectCommand(ctx, repository, args)
+	case "storage":
+		return runStorageCommand(ctx, repository, cfg, args)
 	default:
 		return fmt.Errorf("%w: unknown command %q", ErrUsage, command)
 	}
@@ -158,6 +160,52 @@ func projectList(ctx context.Context, repository store.Repository) error {
 	for _, project := range projects {
 		fmt.Printf("%s\t%s\t%s\n", project.Slug, project.Name, project.CreatedAt.Format(time.RFC3339))
 	}
+	return nil
+}
+
+func runStorageCommand(ctx context.Context, repository store.Repository, cfg config.Config, args []string) error {
+	if len(args) == 0 {
+		return fmt.Errorf("%w: expected storage subcommand", ErrUsage)
+	}
+
+	switch args[0] {
+	case "prune":
+		return storagePrune(ctx, repository, cfg, args[1:])
+	default:
+		return fmt.Errorf("%w: unknown storage subcommand %q", ErrUsage, args[0])
+	}
+}
+
+func storagePrune(ctx context.Context, repository store.Repository, cfg config.Config, args []string) error {
+	fs := flag.NewFlagSet("storage prune", flag.ContinueOnError)
+	retentionDays := cfg.OutputRetentionDays
+	vacuum := true
+	fs.IntVar(&retentionDays, "retention-days", retentionDays, "delete stored test output older than this many days")
+	fs.BoolVar(&vacuum, "vacuum", vacuum, "run VACUUM after pruning sqlite output rows")
+	if err := fs.Parse(args); err != nil {
+		return fmt.Errorf("%w: %v", ErrUsage, err)
+	}
+	if retentionDays <= 0 {
+		return fmt.Errorf("%w: storage prune requires --retention-days to be greater than zero", ErrUsage)
+	}
+	if err := repository.Migrate(ctx); err != nil {
+		return err
+	}
+
+	cutoff := time.Now().UTC().AddDate(0, 0, -retentionDays)
+	pruned, err := repository.PruneTestOutputs(ctx, cutoff)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("pruned %d stored test outputs older than %s\n", pruned, cutoff.Format(time.RFC3339))
+
+	if vacuum && pruned > 0 {
+		if err := repository.Compact(ctx); err != nil {
+			return err
+		}
+		fmt.Println("vacuum complete")
+	}
+
 	return nil
 }
 

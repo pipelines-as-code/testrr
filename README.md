@@ -74,6 +74,7 @@ All configuration is via environment variables.
 | `TESTRR_DATABASE_URL` | `data/testrr.sqlite` | Database connection string. Use a `postgres://` URL for PostgreSQL |
 | `TESTRR_MAX_UPLOAD_MB` | `100` | Maximum upload size in megabytes |
 | `TESTRR_AUTO_MIGRATE` | `true` | Run database migrations automatically on startup |
+| `TESTRR_OUTPUT_RETENTION_DAYS` | `30` | Keep compressed per-test output in the database for this many days. Run metadata and artifacts are kept indefinitely |
 
 ## Uploading test reports
 
@@ -150,7 +151,15 @@ file.
 
 # Run migrations manually
 ./bin/testrr migrate
+
+# Prune old heavy per-test output from the database and vacuum SQLite
+./bin/testrr storage prune
+
+# Override the retention window for a one-off maintenance run
+./bin/testrr storage prune --retention-days 90 --vacuum=false
 ```
+
+`storage prune` removes only heavy per-test payloads such as failure output and stdout/stderr from the database after the retention window. Runs, test summaries, and uploaded report artifacts remain available.
 
 ## Development
 

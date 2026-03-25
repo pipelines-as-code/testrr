@@ -141,13 +141,13 @@ type junitSuites struct {
 }
 
 type junitSuite struct {
-	Name      string        `xml:"name,attr"`
-	Package   string        `xml:"package,attr"`
-	Time      string        `xml:"time,attr"`
-	Cases     []junitCase   `xml:"testcase"`
-	Suites    []junitSuite  `xml:"testsuite"`
-	SystemOut string        `xml:"system-out"`
-	SystemErr string        `xml:"system-err"`
+	Name      string       `xml:"name,attr"`
+	Package   string       `xml:"package,attr"`
+	Time      string       `xml:"time,attr"`
+	Cases     []junitCase  `xml:"testcase"`
+	Suites    []junitSuite `xml:"testsuite"`
+	SystemOut string       `xml:"system-out"`
+	SystemErr string       `xml:"system-err"`
 }
 
 type junitCase struct {
@@ -185,8 +185,8 @@ func walkSuite(results *[]ParsedTestResult, suite junitSuite, parents []string) 
 			DurationMillis: parseDurationMillis(testCase.Time),
 			FailureMessage: message,
 			FailureOutput:  output,
-			SystemOut:      firstNonEmpty(testCase.SystemOut, suite.SystemOut),
-			SystemErr:      firstNonEmpty(testCase.SystemErr, suite.SystemErr),
+			SystemOut:      strings.TrimSpace(testCase.SystemOut),
+			SystemErr:      strings.TrimSpace(testCase.SystemErr),
 		})
 	}
 

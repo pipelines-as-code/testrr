@@ -268,6 +268,212 @@ func TestSQLStoreE2EAnalytics(t *testing.T) {
 	}
 }
 
+func TestSQLStorePruneTestOutputsKeepsRunHistory(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	repo := newTestStore(t)
+	defer repo.Close()
+
+	if err := repo.Migrate(ctx); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+
+	project, err := repo.CreateProject(ctx, CreateProjectInput{
+		ID:           "project-prune",
+		Slug:         "prune",
+		Name:         "Prune",
+		Username:     "demo",
+		PasswordHash: "hash",
+		CreatedAt:    time.Now().UTC(),
+	})
+	if err != nil {
+		t.Fatalf("create project: %v", err)
+	}
+
+	run := Run{
+		ID:             "run-prune",
+		ProjectID:      project.ID,
+		Branch:         "main",
+		RunLabel:       "prune-run",
+		Status:         "complete",
+		StartedAt:      time.Now().UTC(),
+		UploadedAt:     time.Now().UTC(),
+		TotalCount:     1,
+		FailedCount:    1,
+		DurationMillis: 123,
+	}
+	result := TestResult{
+		ID:             "result-prune",
+		RunID:          run.ID,
+		ProjectID:      project.ID,
+		TestKey:        "pkg::suite::TestTrimmed",
+		SuiteName:      "suite",
+		ClassName:      "suite",
+		TestName:       "TestTrimmed",
+		Status:         "failed",
+		FailureMessage: "boom",
+		FailureOutput:  "stacktrace",
+		SystemOut:      "stdout",
+		SystemErr:      "stderr",
+	}
+	if _, err := repo.CreateRun(ctx, CreateRunInput{
+		Run:         run,
+		TestResults: []TestResult{result},
+	}); err != nil {
+		t.Fatalf("create run: %v", err)
+	}
+
+	var storedOutputs int
+	if err := repo.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM test_result_outputs`).Scan(&storedOutputs); err != nil {
+		t.Fatalf("count stored outputs: %v", err)
+	}
+	if storedOutputs != 1 {
+		t.Fatalf("expected 1 stored output row, got %d", storedOutputs)
+	}
+
+	history, err := repo.GetTestHistory(ctx, project.ID, result.TestKey, 10)
+	if err != nil {
+		t.Fatalf("history before prune: %v", err)
+	}
+	if len(history) != 1 || history[0].FailureOutput != "stacktrace" || history[0].SystemOut != "stdout" || history[0].SystemErr != "stderr" {
+		t.Fatalf("expected stored outputs before prune, got %+v", history)
+	}
+
+	pruned, err := repo.PruneTestOutputs(ctx, run.UploadedAt.Add(time.Hour))
+	if err != nil {
+		t.Fatalf("prune outputs: %v", err)
+	}
+	if pruned != 1 {
+		t.Fatalf("expected 1 pruned output row, got %d", pruned)
+	}
+	if err := repo.Compact(ctx); err != nil {
+		t.Fatalf("compact store: %v", err)
+	}
+
+	results, err := repo.ListRunResults(ctx, run.ID)
+	if err != nil {
+		t.Fatalf("list results after prune: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result after prune, got %d", len(results))
+	}
+	if results[0].FailureMessage != "boom" {
+		t.Fatalf("expected failure message to remain, got %q", results[0].FailureMessage)
+	}
+	if results[0].FailureOutput != "" || results[0].SystemOut != "" || results[0].SystemErr != "" {
+		t.Fatalf("expected heavy outputs to be pruned, got %+v", results[0])
+	}
+}
+
+func TestSQLStoreMigrateBackfillsLegacyOutputs(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	repo := newTestStore(t)
+	defer repo.Close()
+
+	for _, statement := range []string{
+		`CREATE TABLE projects (
+			id TEXT PRIMARY KEY,
+			slug TEXT NOT NULL UNIQUE,
+			name TEXT NOT NULL,
+			created_at TEXT NOT NULL
+		);`,
+		`CREATE TABLE runs (
+			id TEXT PRIMARY KEY,
+			project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+			branch TEXT NOT NULL DEFAULT '',
+			commit_sha TEXT NOT NULL DEFAULT '',
+			build_id TEXT NOT NULL DEFAULT '',
+			build_url TEXT NOT NULL DEFAULT '',
+			environment TEXT NOT NULL DEFAULT '',
+			run_label TEXT NOT NULL DEFAULT '',
+			status TEXT NOT NULL,
+			started_at TEXT NOT NULL,
+			uploaded_at TEXT NOT NULL,
+			previous_run_id TEXT NOT NULL DEFAULT '',
+			total_count INTEGER NOT NULL,
+			passed_count INTEGER NOT NULL,
+			failed_count INTEGER NOT NULL,
+			skipped_count INTEGER NOT NULL,
+			duration_millis INTEGER NOT NULL,
+			new_failures INTEGER NOT NULL DEFAULT 0
+		);`,
+		`CREATE TABLE test_results (
+			id TEXT PRIMARY KEY,
+			run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+			project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+			test_key TEXT NOT NULL,
+			suite_name TEXT NOT NULL,
+			package_name TEXT NOT NULL,
+			class_name TEXT NOT NULL,
+			test_name TEXT NOT NULL,
+			file_name TEXT NOT NULL,
+			status TEXT NOT NULL,
+			duration_millis INTEGER NOT NULL,
+			failure_message TEXT NOT NULL DEFAULT '',
+			failure_output TEXT NOT NULL DEFAULT '',
+			system_out TEXT NOT NULL DEFAULT '',
+			system_err TEXT NOT NULL DEFAULT '',
+			regression INTEGER NOT NULL DEFAULT 0
+		);`,
+	} {
+		if _, err := repo.db.ExecContext(ctx, statement); err != nil {
+			t.Fatalf("seed legacy schema: %v", err)
+		}
+	}
+
+	createdAt := time.Date(2026, 3, 25, 12, 0, 0, 0, time.UTC)
+	if _, err := repo.db.ExecContext(ctx, `
+		INSERT INTO projects (id, slug, name, created_at) VALUES (?, ?, ?, ?)
+	`, "project-legacy", "legacy", "Legacy", formatTime(createdAt)); err != nil {
+		t.Fatalf("insert legacy project: %v", err)
+	}
+	if _, err := repo.db.ExecContext(ctx, `
+		INSERT INTO runs (
+			id, project_id, branch, commit_sha, build_id, build_url, environment, run_label, status,
+			started_at, uploaded_at, previous_run_id, total_count, passed_count, failed_count, skipped_count,
+			duration_millis, new_failures
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, "run-legacy", "project-legacy", "main", "", "", "", "", "legacy-run", "complete",
+		formatTime(createdAt), formatTime(createdAt), "", 1, 0, 1, 0, 12, 0); err != nil {
+		t.Fatalf("insert legacy run: %v", err)
+	}
+	if _, err := repo.db.ExecContext(ctx, `
+		INSERT INTO test_results (
+			id, run_id, project_id, test_key, suite_name, package_name, class_name, test_name, file_name,
+			status, duration_millis, failure_message, failure_output, system_out, system_err, regression
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, "result-legacy", "run-legacy", "project-legacy", "pkg::suite::TestLegacy", "suite", "pkg", "suite", "TestLegacy", "",
+		"failed", 12, "legacy boom", "legacy stacktrace", "legacy stdout", "legacy stderr", 0); err != nil {
+		t.Fatalf("insert legacy result: %v", err)
+	}
+
+	if err := repo.Migrate(ctx); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+
+	var storedOutputs int
+	if err := repo.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM test_result_outputs`).Scan(&storedOutputs); err != nil {
+		t.Fatalf("count backfilled outputs: %v", err)
+	}
+	if storedOutputs != 1 {
+		t.Fatalf("expected 1 backfilled output row, got %d", storedOutputs)
+	}
+
+	results, err := repo.ListRunResults(ctx, "run-legacy")
+	if err != nil {
+		t.Fatalf("list backfilled results: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected 1 backfilled result, got %d", len(results))
+	}
+	if results[0].FailureOutput != "legacy stacktrace" || results[0].SystemOut != "legacy stdout" || results[0].SystemErr != "legacy stderr" {
+		t.Fatalf("expected legacy outputs to survive migration, got %+v", results[0])
+	}
+}
+
 func newTestStore(t *testing.T) *SQLStore {
 	t.Helper()
 	repo, err := Open(context.Background(), filepath.Join(t.TempDir(), "testrr.sqlite"))
