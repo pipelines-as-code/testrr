@@ -113,6 +113,51 @@ func TestServerAPIUploadAndListRuns(t *testing.T) {
 	}
 }
 
+func TestServerAPIUploadGoTestJSON(t *testing.T) {
+	t.Parallel()
+
+	serverURL, cleanup := newTestServer(t)
+	defer cleanup()
+
+	client := &http.Client{}
+	uploadResp, err := postMultipartWithBasicAuth(client, serverURL+"/api/v1/projects/demo/runs", "demo-user", "secret", map[string]string{
+		"branch":    "main",
+		"run_label": "go-json",
+	}, filepath.Join("..", "..", "testdata", "go-test-sample.json"))
+	if err != nil {
+		t.Fatalf("api upload: %v", err)
+	}
+	defer uploadResp.Body.Close()
+	if uploadResp.StatusCode != http.StatusCreated {
+		t.Fatalf("expected created response, got %d", uploadResp.StatusCode)
+	}
+
+	request, err := http.NewRequest(http.MethodGet, serverURL+"/api/v1/projects/demo/runs?branch=main", nil)
+	if err != nil {
+		t.Fatalf("new list request: %v", err)
+	}
+	request.SetBasicAuth("demo-user", "secret")
+	listResp, err := client.Do(request)
+	if err != nil {
+		t.Fatalf("list runs: %v", err)
+	}
+	defer listResp.Body.Close()
+
+	var runs []store.Run
+	if err := json.NewDecoder(listResp.Body).Decode(&runs); err != nil {
+		t.Fatalf("decode runs: %v", err)
+	}
+	if len(runs) != 1 {
+		t.Fatalf("expected 1 run, got %d", len(runs))
+	}
+	if runs[0].PassedCount != 1 {
+		t.Fatalf("expected 1 passed test, got %d", runs[0].PassedCount)
+	}
+	if runs[0].FailedCount != 2 {
+		t.Fatalf("expected 2 failed tests, got %d", runs[0].FailedCount)
+	}
+}
+
 func newTestServer(t *testing.T) (string, func()) {
 	t.Helper()
 
@@ -143,7 +188,12 @@ func newTestServer(t *testing.T) (string, func()) {
 	server, err := New(config.Config{
 		DataDir:        dataDir,
 		MaxUploadBytes: 10 * 1024 * 1024,
-	}, repo, parser.NewRegistry(parser.NewJUnitParser()))
+	}, repo, parser.NewRegistry(
+		parser.NewJUnitParser(),
+		parser.NewTRXParser(),
+		parser.NewNUnitParser(),
+		parser.NewGoTestJSONParser(),
+	))
 	if err != nil {
 		t.Fatalf("new server: %v", err)
 	}

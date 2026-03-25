@@ -39,7 +39,7 @@ jobs:
       - name: Install Node dependencies
         run: npm ci
 
-      - name: Run tests and generate JUnit
+      - name: Run tests and collect go test JSON
         id: tests
         shell: bash
         run: |
@@ -48,12 +48,11 @@ jobs:
           make generate assets
           test_status=0
           go test -json ./... 2>&1 | tee /tmp/testrr-ci/go-test.json || test_status=$?
-          go run ./hack/gojson2junit -in /tmp/testrr-ci/go-test.json -out /tmp/testrr-ci/go-test.xml
           echo "test_status=${test_status}" >> "${GITHUB_OUTPUT}"
 
       - name: Upload test results to testrr
         if: always()
-        run: ./hack/upload-testrr.sh /tmp/testrr-ci/go-test.xml
+        run: ./hack/upload-testrr.sh /tmp/testrr-ci/go-test.json
 
       - name: Fail workflow if tests failed
         if: steps.tests.outputs.test_status != '0'

@@ -1,0 +1,9 @@
+{"Time":"2026-03-25T18:00:00Z","Action":"run","Package":"testrr/internal/parser","Test":"TestParsePass"}
+{"Time":"2026-03-25T18:00:00Z","Action":"output","Package":"testrr/internal/parser","Test":"TestParsePass","Output":"=== RUN   TestParsePass\n"}
+{"Time":"2026-03-25T18:00:00Z","Action":"pass","Package":"testrr/internal/parser","Test":"TestParsePass","Elapsed":0.012}
+{"Time":"2026-03-25T18:00:00Z","Action":"run","Package":"testrr/internal/parser","Test":"TestParseFail"}
+{"Time":"2026-03-25T18:00:00Z","Action":"output","Package":"testrr/internal/parser","Test":"TestParseFail","Output":"boom\n"}
+{"Time":"2026-03-25T18:00:00Z","Action":"fail","Package":"testrr/internal/parser","Test":"TestParseFail","Elapsed":0.034}
+{"Time":"2026-03-25T18:00:00Z","Action":"output","Package":"testrr/internal/build","Output":"# testrr/internal/build\n"}
+{"Time":"2026-03-25T18:00:00Z","Action":"output","Package":"testrr/internal/build","Output":"compile error\n"}
+{"Time":"2026-03-25T18:00:00Z","Action":"fail","Package":"testrr/internal/build","Elapsed":0.02}

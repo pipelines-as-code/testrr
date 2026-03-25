@@ -45,7 +45,12 @@ func Run(ctx context.Context, args []string) error {
 				return err
 			}
 		}
-			server, err := httpserver.New(cfg, repository, parser.NewRegistry(parser.NewJUnitParser(), parser.NewTRXParser(), parser.NewNUnitParser()))
+			server, err := httpserver.New(cfg, repository, parser.NewRegistry(
+				parser.NewJUnitParser(),
+				parser.NewTRXParser(),
+				parser.NewNUnitParser(),
+				parser.NewGoTestJSONParser(),
+			))
 		if err != nil {
 			return err
 		}

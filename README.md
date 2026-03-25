@@ -124,11 +124,15 @@ curl -u ci:secret \
       ${{ vars.TESTRR_URL }}/api/v1/projects/my-project/runs
 ```
 
+`go test -json` output can also be uploaded directly with a `.json` or `.jsonl`
+file.
+
 ## Supported report formats
 
 | Format | Extension | Notes |
 |---|---|---|
 | JUnit XML | `.xml` | Standard `<testsuite>` / `<testsuites>` format |
+| Go test JSON | `.json` or `.jsonl` | Newline-delimited `go test -json` output |
 | TRX | `.trx` or `.xml` | Visual Studio / `dotnet test` output |
 | NUnit | `.xml` | NUnit 3 (`<test-run>`) and NUnit 2 (`<test-results>`) |
 
@@ -161,6 +165,6 @@ make check     # generate + assets + lint + test + build
 
 ## CI Uploads
 
-GitHub Actions uploads this repo's test results to
+GitHub Actions uploads this repo's raw `go test -json` results to
 `https://testrr.pipelinesascode.com` using project `testrr` and username `pac`
 when the `TESTRR_PASSWORD` repository secret is set.
