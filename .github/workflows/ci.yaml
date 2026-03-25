@@ -1,0 +1,101 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    env:
+      TESTRR_URL: https://testrr.pipelinesascode.com
+      TESTRR_PROJECT: testrr
+      TESTRR_USERNAME: pac
+      TESTRR_PASSWORD: ${{ secrets.TESTRR_PASSWORD }}
+      TESTRR_BRANCH: ${{ github.head_ref || github.ref_name }}
+      TESTRR_COMMIT_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      TESTRR_BUILD_ID: ${{ github.run_id }}
+      TESTRR_BUILD_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      TESTRR_RUN_LABEL: gha-unit-tests
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install Node dependencies
+        run: npm ci
+
+      - name: Run tests and generate JUnit
+        id: tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/testrr-ci
+          make generate assets
+          test_status=0
+          go test -json ./... 2>&1 | tee /tmp/testrr-ci/go-test.json || test_status=$?
+          go run ./hack/gojson2junit -in /tmp/testrr-ci/go-test.json -out /tmp/testrr-ci/go-test.xml
+          echo "test_status=${test_status}" >> "${GITHUB_OUTPUT}"
+
+      - name: Upload test results to testrr
+        if: always()
+        run: ./hack/upload-testrr.sh /tmp/testrr-ci/go-test.xml
+
+      - name: Fail workflow if tests failed
+        if: steps.tests.outputs.test_status != '0'
+        run: exit 1
+
+  build-image:
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        if: github.event_name == 'push'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=ref,event=branch
+            type=sha,prefix=sha-
+            type=raw,value=latest,enable=${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: ${{ github.event_name == 'push' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

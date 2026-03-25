@@ -158,3 +158,9 @@ make test      # run tests
 make build     # build binary
 make check     # generate + assets + lint + test + build
 ```
+
+## CI Uploads
+
+GitHub Actions uploads this repo's test results to
+`https://testrr.pipelinesascode.com` using project `testrr` and username `pac`
+when the `TESTRR_PASSWORD` repository secret is set.
