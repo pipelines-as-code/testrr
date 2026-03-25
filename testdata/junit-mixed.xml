@@ -1,0 +1,13 @@
+<testsuites>
+  <testsuite name="suite-a" package="pkg/a">
+    <testcase classname="pkg/a.Foo" name="TestPass" time="0.02"></testcase>
+    <testcase classname="pkg/a.Foo" name="TestFail" time="0.05">
+      <failure message="boom">stack trace here</failure>
+    </testcase>
+  </testsuite>
+  <testsuite name="suite-b" package="pkg/b">
+    <testcase classname="pkg/b.Bar" name="TestSkip" time="0.01">
+      <skipped message="not on linux">conditional skip</skipped>
+    </testcase>
+  </testsuite>
+</testsuites>

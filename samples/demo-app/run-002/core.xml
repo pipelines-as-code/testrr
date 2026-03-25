@@ -1,0 +1,8 @@
+<testsuite name="core" package="demo/core" tests="4" failures="1" skipped="0" time="0.230">
+  <testcase classname="demo.core.AuthTest" name="TestAuthLogin" time="0.110">
+    <failure message="expected 200 login response">received 401 from auth backend</failure>
+  </testcase>
+  <testcase classname="demo.core.AuthTest" name="TestAuthLogout" time="0.024"></testcase>
+  <testcase classname="demo.core.ConfigTest" name="TestConfigLoad" time="0.038"></testcase>
+  <testcase classname="demo.core.ConfigTest" name="TestFeatureFlags" time="0.058"></testcase>
+</testsuite>

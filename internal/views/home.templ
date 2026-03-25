@@ -1,0 +1,38 @@
+package views
+
+import (
+	"context"
+	"io"
+
+	"testrr/internal/store"
+)
+
+templ HomePage(projects []store.Project) {
+	@Layout("testrr | Projects", nil, templ.ComponentFunc(func(ctx context.Context, w io.Writer) error {
+		return HomeContent(projects).Render(ctx, w)
+	}))
+}
+
+templ HomeContent(projects []store.Project) {
+	<section class="card bg-base-100 shadow-xl border border-base-200">
+		<div class="card-body">
+			<div class="flex justify-between items-center mb-6">
+				<div>
+					<p class="text-sm font-semibold uppercase tracking-wider text-base-content/60 mb-1">Public projects</p>
+					<h2 class="text-3xl font-bold">Browse test history</h2>
+				</div>
+			</div>
+			<div class="flex flex-col gap-3">
+				for _, project := range projects {
+					<a class="flex justify-between items-center p-4 rounded-xl border border-base-200 bg-base-100 hover:bg-base-200 transition-colors" href={ templ.URL("/projects/" + project.Slug) }>
+						<span class="text-lg font-medium">{ project.Name }</span>
+						<strong class="text-sm text-base-content/60 bg-base-200 px-3 py-1 rounded-full">{ project.Slug }</strong>
+					</a>
+				}
+				if len(projects) == 0 {
+					<p class="text-base-content/60 italic text-center py-8">No projects have been created yet.</p>
+				}
+			</div>
+		</div>
+	</section>
+}

@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<test-run id="1" name="nunit-sample" total="3" passed="1" failed="1" skipped="1" duration="0.789">
+  <test-suite type="Assembly" name="MyApp.Tests.dll" fullname="MyApp.Tests.dll" result="Failed" duration="0.789">
+    <test-suite type="TestFixture" name="SampleTests" fullname="MyApp.Tests.SampleTests" result="Failed" duration="0.789">
+      <test-case id="1001" name="TestPass" fullname="MyApp.Tests.SampleTests.TestPass" result="Passed" duration="0.123" />
+      <test-case id="1002" name="TestFail" fullname="MyApp.Tests.SampleTests.TestFail" result="Failed" duration="0.456">
+        <failure>
+          <message><![CDATA[Expected 1 but got 2]]></message>
+          <stack-trace><![CDATA[at MyApp.Tests.SampleTests.TestFail() in SampleTests.cs:line 42]]></stack-trace>
+        </failure>
+      </test-case>
+      <test-case id="1003" name="TestSkip" fullname="MyApp.Tests.SampleTests.TestSkip" result="Skipped" duration="0">
+        <reason>
+          <message>Not implemented yet</message>
+        </reason>
+      </test-case>
+    </test-suite>
+  </test-suite>
+</test-run>

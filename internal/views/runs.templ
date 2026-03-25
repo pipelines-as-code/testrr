@@ -1,0 +1,32 @@
+package views
+
+import (
+	"context"
+	"io"
+
+	"testrr/internal/store"
+)
+
+templ RunsPage(project store.Project, runs []store.Run, branch string) {
+	@Layout("testrr | Runs", &project, templ.ComponentFunc(func(ctx context.Context, w io.Writer) error {
+		return RunsContent(project, runs, branch).Render(ctx, w)
+	}))
+}
+
+templ RunsContent(project store.Project, runs []store.Run, branch string) {
+	<section class="card bg-base-100 shadow-xl border border-base-200">
+		<div class="card-body">
+			<div class="flex flex-col md:flex-row justify-between md:items-center gap-4 mb-6">
+				<div>
+					<p class="text-sm font-semibold uppercase tracking-wider text-base-content/60 mb-1">Runs</p>
+					<h2 class="text-3xl font-bold">Historical uploads</h2>
+				</div>
+				<form method="get" action={ templ.URL("/projects/" + project.Slug + "/runs") } class="flex gap-2">
+					<input type="text" name="branch" value={ branch } placeholder="Filter by branch" class="input input-bordered w-full md:w-auto"/>
+					<button type="submit" class="btn btn-primary">Filter</button>
+				</form>
+			</div>
+			@RunTable(project, runs)
+		</div>
+	</section>
+}

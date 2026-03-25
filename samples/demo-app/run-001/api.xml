@@ -1,0 +1,8 @@
+<testsuite name="api" package="demo/api" tests="4" failures="0" skipped="1" time="0.165">
+  <testcase classname="demo.api.WidgetTest" name="TestListWidgets" time="0.031"></testcase>
+  <testcase classname="demo.api.WidgetTest" name="TestCreateWidget" time="0.044"></testcase>
+  <testcase classname="demo.api.WidgetTest" name="TestDeleteWidget" time="0.040"></testcase>
+  <testcase classname="demo.api.ExportTest" name="TestExportCSV" time="0.050">
+    <skipped message="feature disabled on baseline">guarded integration</skipped>
+  </testcase>
+</testsuite>

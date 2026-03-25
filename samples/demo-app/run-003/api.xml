@@ -1,0 +1,10 @@
+<testsuite name="api" package="demo/api" tests="4" failures="1" skipped="1" time="0.260">
+  <testcase classname="demo.api.WidgetTest" name="TestListWidgets" time="0.130">
+    <failure message="list endpoint timed out">upstream inventory service exceeded deadline</failure>
+  </testcase>
+  <testcase classname="demo.api.WidgetTest" name="TestCreateWidget" time="0.060"></testcase>
+  <testcase classname="demo.api.WidgetTest" name="TestDeleteWidget" time="0.025"></testcase>
+  <testcase classname="demo.api.ExportTest" name="TestExportCSV" time="0.045">
+    <skipped message="temporarily quarantined">known flaky while debugging timeout</skipped>
+  </testcase>
+</testsuite>

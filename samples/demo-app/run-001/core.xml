@@ -1,0 +1,6 @@
+<testsuite name="core" package="demo/core" tests="4" failures="0" skipped="0" time="0.120">
+  <testcase classname="demo.core.AuthTest" name="TestAuthLogin" time="0.020"></testcase>
+  <testcase classname="demo.core.AuthTest" name="TestAuthLogout" time="0.018"></testcase>
+  <testcase classname="demo.core.ConfigTest" name="TestConfigLoad" time="0.030"></testcase>
+  <testcase classname="demo.core.ConfigTest" name="TestFeatureFlags" time="0.052"></testcase>
+</testsuite>

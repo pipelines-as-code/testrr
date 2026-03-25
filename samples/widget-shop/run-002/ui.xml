@@ -1,0 +1,7 @@
+<testsuite name="ui" package="widget/ui" tests="3" failures="1" skipped="0" time="0.140">
+  <testcase classname="widget.ui.CartTest" name="TestAddToCart" time="0.024"></testcase>
+  <testcase classname="widget.ui.CartTest" name="TestRemoveFromCart" time="0.031"></testcase>
+  <testcase classname="widget.ui.CheckoutTest" name="TestCheckoutSummary" time="0.085">
+    <failure message="chart widget was missing">summary panel did not render total price chart</failure>
+  </testcase>
+</testsuite>

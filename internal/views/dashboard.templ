@@ -1,0 +1,147 @@
+package views
+
+import (
+	"context"
+	"fmt"
+	"io"
+
+	"testrr/internal/store"
+)
+
+templ DashboardPage(project store.Project, data store.DashboardData, branch string) {
+	@Layout("testrr | " + project.Name, &project, templ.ComponentFunc(func(ctx context.Context, w io.Writer) error {
+		return DashboardContent(project, data, branch).Render(ctx, w)
+	}))
+}
+
+templ DashboardContent(project store.Project, data store.DashboardData, branch string) {
+	<div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6" id="dashboard-main">
+		<section class="card bg-base-100 shadow-xl border border-base-200 xl:col-span-3">
+			<div class="card-body">
+				<div class="flex flex-col lg:flex-row justify-between lg:items-center mb-6 gap-4">
+					<div>
+						<p class="text-sm font-semibold uppercase tracking-wider text-base-content/60 mb-1">Latest run</p>
+						if data.Latest != nil {
+							<h2 class="text-3xl font-bold">{ data.Latest.RunLabel }</h2>
+						} else {
+							<h2 class="text-3xl font-bold text-base-content/40">No runs yet</h2>
+						}
+					</div>
+				</div>
+				<div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+					<div class="stat bg-base-200 rounded-2xl border border-base-300">
+						<div class="stat-title">Total runs</div>
+						<div class="stat-value">{ fmt.Sprintf("%d", data.TotalRuns) }</div>
+					</div>
+					<div class="stat bg-base-200 rounded-2xl border border-base-300">
+						<div class="stat-title">Total failures</div>
+						<div class="stat-value">{ fmt.Sprintf("%d", data.TotalFailures) }</div>
+					</div>
+					if data.Latest != nil {
+						<div class="stat bg-base-200 rounded-2xl border border-base-300">
+							<div class="stat-title">Pass rate</div>
+							<div class="stat-value">{ passRate(data.Latest.PassedCount, data.Latest.TotalCount) }</div>
+						</div>
+						<div class="stat bg-base-200 rounded-2xl border border-base-300">
+							<div class="stat-title">New failures</div>
+							<div class="stat-value text-error">{ fmt.Sprintf("%d", data.Latest.NewFailures) }</div>
+						</div>
+					}
+				</div>
+				<p class="text-sm text-base-content/60 mt-4">Uploads are API-only. Send authenticated report uploads to the project run API endpoint.</p>
+			</div>
+		</section>
+
+		<section class="card bg-base-100 shadow-xl border border-base-200 xl:col-span-3">
+			<div class="card-body">
+				<div class="mb-6">
+					<p class="text-sm font-semibold uppercase tracking-wider text-base-content/60 mb-1">Trends</p>
+					<h2 class="text-2xl font-bold">Pass rate and duration</h2>
+				</div>
+				<div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+					<div class="min-h-[300px] w-full bg-base-200/50 rounded-2xl border border-base-300 p-2" data-chart-endpoint={ "/projects/" + project.Slug + "/charts/summary?branch=" + branch } data-chart-kind="pass-rate"></div>
+					<div class="min-h-[300px] w-full bg-base-200/50 rounded-2xl border border-base-300 p-2" data-chart-endpoint={ "/projects/" + project.Slug + "/charts/summary?branch=" + branch } data-chart-kind="duration"></div>
+				</div>
+			</div>
+		</section>
+
+		<section class="card bg-base-100 shadow-xl border border-base-200 md:col-span-2 xl:col-span-2">
+			<div class="card-body overflow-x-auto">
+				<div class="mb-4">
+					<p class="text-sm font-semibold uppercase tracking-wider text-base-content/60 mb-1">History</p>
+					<h2 class="text-2xl font-bold">Recent runs</h2>
+				</div>
+				@RunTable(project, data.RecentRuns)
+			</div>
+		</section>
+
+		<section class="card bg-base-100 shadow-xl border border-base-200 md:col-span-2 xl:col-span-1">
+			<div class="card-body">
+				<div class="mb-4">
+					<p class="text-sm font-semibold uppercase tracking-wider text-base-content/60 mb-1">Frequent failures</p>
+					<h2 class="text-2xl font-bold">Top failing tests</h2>
+				</div>
+				<div class="flex flex-col gap-3">
+					for _, item := range data.TopFailing {
+						<a class="flex justify-between items-center p-3 rounded-xl border border-base-200 bg-base-200 hover:bg-base-300 transition-colors" href={ templ.URL("/projects/" + project.Slug + "/tests/" + item.TestKey) }>
+							<span class="font-medium truncate mr-2">{ item.DisplayName }</span>
+							<span class="badge badge-error badge-sm">{ fmt.Sprintf("%d failures", item.FailureCount) }</span>
+						</a>
+					}
+					if len(data.TopFailing) == 0 {
+						<p class="text-base-content/60 italic text-center py-4">No failing tests recorded yet.</p>
+					}
+				</div>
+			</div>
+		</section>
+	</div>
+}
+
+templ RunTable(project store.Project, runs []store.Run) {
+	<div class="overflow-x-auto">
+		<table class="table table-zebra w-full">
+			<thead>
+				<tr class="uppercase text-xs tracking-wider">
+					<th>Run</th>
+					<th>Status</th>
+					<th>Totals</th>
+					<th>Uploaded</th>
+				</tr>
+			</thead>
+			<tbody>
+				for _, run := range runs {
+					<tr class="hover">
+						<td>
+							<a href={ templ.URL("/projects/" + project.Slug + "/runs/" + run.ID) } class="block font-semibold">
+								{ run.RunLabel }
+								if run.Branch != "" {
+									<div class="text-xs font-normal text-base-content/60 mt-0.5">{ run.Branch }</div>
+								}
+							</a>
+						</td>
+						<td>
+							<span class={ "badge badge-sm font-medium " + statusClass(run.Status) }>{ statusLabel(run.Status) }</span>
+						</td>
+						<td class="whitespace-nowrap">
+							<span class="text-success font-medium">{ fmt.Sprintf("%d", run.PassedCount) }</span>
+							<span class="text-base-content/30 mx-1">/</span>
+							if run.FailedCount > 0 {
+								<span class="text-error font-medium">{ fmt.Sprintf("%d", run.FailedCount) }</span>
+							} else {
+								<span class="text-base-content/60">{ fmt.Sprintf("%d", run.FailedCount) }</span>
+							}
+							<span class="text-base-content/30 mx-1">/</span>
+							<span class="text-warning font-medium">{ fmt.Sprintf("%d", run.SkippedCount) }</span>
+						</td>
+						<td class="text-sm text-base-content/70 whitespace-nowrap">{ formatDate(run.UploadedAt) }</td>
+					</tr>
+				}
+				if len(runs) == 0 {
+					<tr>
+						<td colspan="4" class="text-center py-8 text-base-content/50 italic">No runs uploaded yet.</td>
+					</tr>
+				}
+			</tbody>
+		</table>
+	</div>
+}

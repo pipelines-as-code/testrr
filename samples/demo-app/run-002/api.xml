@@ -1,0 +1,6 @@
+<testsuite name="api" package="demo/api" tests="4" failures="0" skipped="0" time="0.190">
+  <testcase classname="demo.api.WidgetTest" name="TestListWidgets" time="0.036"></testcase>
+  <testcase classname="demo.api.WidgetTest" name="TestCreateWidget" time="0.070"></testcase>
+  <testcase classname="demo.api.WidgetTest" name="TestDeleteWidget" time="0.040"></testcase>
+  <testcase classname="demo.api.ExportTest" name="TestExportCSV" time="0.044"></testcase>
+</testsuite>

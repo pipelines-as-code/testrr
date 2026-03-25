@@ -1,0 +1,71 @@
+package views
+
+import (
+	"context"
+	"io"
+
+	"testrr/internal/store"
+)
+
+templ TestPage(project store.Project, testKey string, history []store.TestHistoryEntry) {
+	@Layout("testrr | Test History", &project, templ.ComponentFunc(func(ctx context.Context, w io.Writer) error {
+		return TestContent(testKey, history).Render(ctx, w)
+	}))
+}
+
+templ TestContent(testKey string, history []store.TestHistoryEntry) {
+	<section class="card bg-base-100 shadow-xl border border-base-200">
+		<div class="card-body p-4 sm:p-6 lg:p-8">
+			<div class="mb-8">
+				<p class="text-sm font-semibold uppercase tracking-wider text-base-content/60 mb-1">Test history</p>
+				<h2 class="text-2xl font-bold font-mono break-all">{ testKey }</h2>
+			</div>
+			
+			<div class="overflow-x-auto">
+				<table class="table w-full">
+					<thead>
+						<tr class="uppercase text-xs tracking-wider border-b border-base-300">
+							<th>Run</th>
+							<th>Status</th>
+							<th>Duration</th>
+							<th>Uploaded</th>
+						</tr>
+					</thead>
+					<tbody class="divide-y divide-base-200">
+						for _, entry := range history {
+							<tr class="hover">
+								<td class="align-top py-4">
+									<div class="font-semibold">{ entry.RunLabel }</div>
+									<div class="text-xs text-base-content/60 mt-0.5">{ entry.Branch }</div>
+								</td>
+								<td class="align-top py-4">
+									<span class={ "badge badge-sm font-medium " + statusClass(entry.Status) }>{ statusLabel(entry.Status) }</span>
+								</td>
+								<td class="align-top py-4 text-sm text-base-content/80 whitespace-nowrap">
+									{ formatMillis(entry.DurationMillis) }
+								</td>
+								<td class="align-top py-4 text-sm text-base-content/70 whitespace-nowrap">
+									{ formatDate(entry.UploadedAt) }
+								</td>
+							</tr>
+							if entry.FailureMessage != "" {
+								<tr>
+									<td colspan="4" class="pb-4 pt-0 border-t-0">
+										<div class="text-sm font-medium text-error bg-error/5 p-3 rounded-lg border border-error/10">
+											{ entry.FailureMessage }
+										</div>
+									</td>
+								</tr>
+							}
+						}
+						if len(history) == 0 {
+							<tr>
+								<td colspan="4" class="text-center py-8 text-base-content/50 italic">No history found for this test.</td>
+							</tr>
+						}
+					</tbody>
+				</table>
+			</div>
+		</div>
+	</section>
+}

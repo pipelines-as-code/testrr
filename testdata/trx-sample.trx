@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<TestRun id="abc123" name="Test Run" xmlns="http://microsoft.com/schemas/VisualStudio/TeamTest/2010">
+  <TestDefinitions>
+    <UnitTest name="TestPass" id="11111111-0000-0000-0000-000000000001">
+      <TestMethod className="MyApp.Tests.SampleTests" name="TestPass" />
+    </UnitTest>
+    <UnitTest name="TestFail" id="11111111-0000-0000-0000-000000000002">
+      <TestMethod className="MyApp.Tests.SampleTests" name="TestFail" />
+    </UnitTest>
+    <UnitTest name="TestSkip" id="11111111-0000-0000-0000-000000000003">
+      <TestMethod className="MyApp.Tests.SampleTests" name="TestSkip" />
+    </UnitTest>
+  </TestDefinitions>
+  <Results>
+    <UnitTestResult testId="11111111-0000-0000-0000-000000000001" testName="TestPass" outcome="Passed" duration="00:00:00.1230000">
+      <Output>
+        <StdOut>all good</StdOut>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult testId="11111111-0000-0000-0000-000000000002" testName="TestFail" outcome="Failed" duration="00:00:00.4560000">
+      <Output>
+        <ErrorInfo>
+          <Message>Expected 1 but was 2</Message>
+          <StackTrace>at MyApp.Tests.SampleTests.TestFail() line 42</StackTrace>
+        </ErrorInfo>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult testId="11111111-0000-0000-0000-000000000003" testName="TestSkip" outcome="NotExecuted" duration="00:00:00.0000000">
+    </UnitTestResult>
+  </Results>
+</TestRun>

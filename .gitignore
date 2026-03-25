@@ -1,0 +1,7 @@
+node_modules/
+bin/*
+web/dist/
+data/
+coverage.out
+*.sqlite
+*.sqlite-*

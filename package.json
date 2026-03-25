@@ -1,0 +1,22 @@
+{
+  "name": "testrr",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "build:css": "npx @tailwindcss/cli -i web/src/styles.css -o web/dist/app.css",
+    "build:js": "esbuild web/src/main.ts --bundle --format=esm --target=es2022 --outdir=web/dist --entry-names=app",
+    "build": "npm run build:css && npm run build:js"
+  },
+  "dependencies": {
+    "echarts": "6.0.0",
+    "htmx.org": "2.0.8"
+  },
+  "devDependencies": {
+    "@tailwindcss/cli": "^4.2.2",
+    "daisyui": "^5.5.19",
+    "esbuild": "0.27.4",
+    "tailwindcss": "^4.2.2",
+    "typescript": "6.0.2"
+  }
+}

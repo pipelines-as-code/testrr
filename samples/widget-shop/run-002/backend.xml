@@ -1,0 +1,5 @@
+<testsuite name="backend" package="widget/backend" tests="3" failures="0" skipped="0" time="0.122">
+  <testcase classname="widget.backend.StockTest" name="TestReserveInventory" time="0.034"></testcase>
+  <testcase classname="widget.backend.StockTest" name="TestReleaseInventory" time="0.039"></testcase>
+  <testcase classname="widget.backend.PriceTest" name="TestPriceRules" time="0.049"></testcase>
+</testsuite>
