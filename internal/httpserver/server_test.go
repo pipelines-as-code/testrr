@@ -9,6 +9,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -158,6 +159,113 @@ func TestServerAPIUploadGoTestJSON(t *testing.T) {
 	}
 }
 
+func TestServerRunPageAndTestHistoryRenderE2EOutput(t *testing.T) {
+	t.Parallel()
+
+	serverURL, cleanup := newTestServer(t)
+	defer cleanup()
+
+	report := `<testsuites>
+  <testsuite name="suite-a" package="pkg/a">
+    <testcase classname="pkg/a.E2E" name="TestAnsi" time="0.05">
+      <failure message="boom">plain failure output</failure>
+      <system-out>plain stdout</system-out>
+      <system-err>plain stderr</system-err>
+    </testcase>
+  </testsuite>
+</testsuites>`
+
+	client := &http.Client{}
+	uploadResp, err := postMultipartContentsWithBasicAuth(client, serverURL+"/api/v1/projects/demo/runs", "demo-user", "secret", map[string]string{
+		"branch":    "main",
+		"run_label": "ansi-run",
+	}, "ansi.xml", []byte(report))
+	if err != nil {
+		t.Fatalf("api upload: %v", err)
+	}
+	defer uploadResp.Body.Close()
+	if uploadResp.StatusCode != http.StatusCreated {
+		t.Fatalf("expected created response, got %d", uploadResp.StatusCode)
+	}
+
+	var created store.Run
+	if err := json.NewDecoder(uploadResp.Body).Decode(&created); err != nil {
+		t.Fatalf("decode created run: %v", err)
+	}
+
+	runResp, err := client.Get(serverURL + "/projects/demo/runs/" + created.ID)
+	if err != nil {
+		t.Fatalf("run page request: %v", err)
+	}
+	defer runResp.Body.Close()
+	runBody, err := ioReadAll(runResp.Body)
+	if err != nil {
+		t.Fatalf("read run page: %v", err)
+	}
+	runPage := string(runBody)
+	for _, snippet := range []string{"TestAnsi", "Stdout", "Stderr", "term-container"} {
+		if !strings.Contains(runPage, snippet) {
+			t.Fatalf("expected run page to contain %q", snippet)
+		}
+	}
+
+	testKey := "pkg/a::pkg/a.e2e::pkg/a.e2e::testansi"
+	historyResp, err := client.Get(serverURL + "/projects/demo/tests?test_key=" + url.QueryEscape(testKey))
+	if err != nil {
+		t.Fatalf("test history request: %v", err)
+	}
+	defer historyResp.Body.Close()
+	if historyResp.StatusCode != http.StatusOK {
+		t.Fatalf("expected public test history page, got %d", historyResp.StatusCode)
+	}
+	historyBody, err := ioReadAll(historyResp.Body)
+	if err != nil {
+		t.Fatalf("read test history page: %v", err)
+	}
+	historyPage := string(historyBody)
+	for _, snippet := range []string{"data-chart-kind=\"test-duration\"", "Stdout", "Stderr", "term-container"} {
+		if !strings.Contains(historyPage, snippet) {
+			t.Fatalf("expected test history page to contain %q", snippet)
+		}
+	}
+
+	chartResp, err := client.Get(serverURL + "/projects/demo/tests/chart?test_key=" + url.QueryEscape(testKey))
+	if err != nil {
+		t.Fatalf("test chart request: %v", err)
+	}
+	defer chartResp.Body.Close()
+	if chartResp.StatusCode != http.StatusOK {
+		t.Fatalf("expected test chart response, got %d", chartResp.StatusCode)
+	}
+	var chart store.TestDurationChart
+	if err := json.NewDecoder(chartResp.Body).Decode(&chart); err != nil {
+		t.Fatalf("decode test chart: %v", err)
+	}
+	if len(chart.Labels) != 1 || chart.Labels[0] != "ansi-run" || chart.Statuses[0] != "failed" {
+		t.Fatalf("unexpected test chart payload: %+v", chart)
+	}
+}
+
+func TestGroupRunResultsUsesDeterministicBuckets(t *testing.T) {
+	groups := groupRunResults([]store.TestResult{
+		{TestKey: "b", SuiteName: "suite-b", TestName: "TestB"},
+		{TestKey: "a", SuiteName: "suite-a", TestName: "TestA"},
+		{TestKey: "c", FileName: "fallback.xml", TestName: "TestC"},
+	}, map[string][]string{
+		"a": {"passed", "failed"},
+	})
+
+	if len(groups) != 3 {
+		t.Fatalf("expected 3 groups, got %d", len(groups))
+	}
+	if groups[0].Name != "fallback.xml" || groups[1].Name != "suite-a" || groups[2].Name != "suite-b" {
+		t.Fatalf("unexpected group order: %+v", groups)
+	}
+	if len(groups[1].Results) != 1 || len(groups[1].Results[0].RecentStatuses) != 2 {
+		t.Fatalf("expected recent statuses to be attached to grouped result, got %+v", groups[1].Results)
+	}
+}
+
 func newTestServer(t *testing.T) (string, func()) {
 	t.Helper()
 
@@ -210,7 +318,10 @@ func postMultipartWithBasicAuth(client *http.Client, endpoint, username, passwor
 	if err != nil {
 		return nil, err
 	}
+	return postMultipartContentsWithBasicAuth(client, endpoint, username, password, fields, filepath.Base(fixturePath), fileContents)
+}
 
+func postMultipartContentsWithBasicAuth(client *http.Client, endpoint, username, password string, fields map[string]string, fileName string, fileContents []byte) (*http.Response, error) {
 	var body bytes.Buffer
 	writer := multipart.NewWriter(&body)
 	for key, value := range fields {
@@ -218,7 +329,7 @@ func postMultipartWithBasicAuth(client *http.Client, endpoint, username, passwor
 			return nil, err
 		}
 	}
-	fileWriter, err := writer.CreateFormFile("files", filepath.Base(fixturePath))
+	fileWriter, err := writer.CreateFormFile("files", fileName)
 	if err != nil {
 		return nil, err
 	}

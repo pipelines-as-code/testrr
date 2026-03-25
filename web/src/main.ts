@@ -8,6 +8,12 @@ type ChartSummary = {
   durations: number[];
 };
 
+type TestDurationChart = {
+  labels: string[];
+  durations: number[];
+  statuses: string[];
+};
+
 declare global {
   interface Window {
     htmx: typeof htmx;
@@ -32,18 +38,19 @@ async function renderCharts(root: ParentNode = document): Promise<void> {
         return;
       }
 
-      const payload = (await response.json()) as ChartSummary;
+      const payload = (await response.json()) as ChartSummary | TestDurationChart;
       const chart = echarts.init(node);
       if (kind === "pass-rate") {
+        const summary = payload as ChartSummary;
         chart.setOption({
           animationDuration: 450,
           tooltip: { trigger: "axis" },
-          xAxis: { type: "category", data: payload.labels },
+          xAxis: { type: "category", data: summary.labels },
           yAxis: { type: "value", min: 0, max: 100, axisLabel: { formatter: "{value}%" } },
           series: [
             {
               type: "line",
-              data: payload.pass_rates,
+              data: summary.pass_rates,
               smooth: true,
               lineStyle: { width: 4, color: "#1d7f5f" },
               areaStyle: { color: "rgba(29,127,95,0.16)" },
@@ -53,15 +60,49 @@ async function renderCharts(root: ParentNode = document): Promise<void> {
         return;
       }
 
+      if (kind === "test-duration") {
+        const summary = payload as TestDurationChart;
+        chart.setOption({
+          animationDuration: 450,
+          tooltip: { trigger: "axis" },
+          xAxis: { type: "category", data: summary.labels },
+          yAxis: { type: "value", axisLabel: { formatter: "{value} ms" } },
+          series: [
+            {
+              type: "line",
+              data: summary.durations,
+              smooth: true,
+              symbolSize: 8,
+              lineStyle: { width: 3, color: "#2c6e63" },
+              areaStyle: { color: "rgba(44,110,99,0.16)" },
+              itemStyle: {
+                color: (params: { dataIndex: number }) => {
+                  const status = summary.statuses[params.dataIndex];
+                  if (status === "failed") {
+                    return "#d3485d";
+                  }
+                  if (status === "skipped") {
+                    return "#c68b1f";
+                  }
+                  return "#2c6e63";
+                },
+              },
+            },
+          ],
+        });
+        return;
+      }
+
+      const summary = payload as ChartSummary;
       chart.setOption({
         animationDuration: 450,
         tooltip: { trigger: "axis" },
-        xAxis: { type: "category", data: payload.labels },
+        xAxis: { type: "category", data: summary.labels },
         yAxis: { type: "value", axisLabel: { formatter: "{value} ms" } },
         series: [
           {
             type: "bar",
-            data: payload.durations,
+            data: summary.durations,
             itemStyle: { color: "#c67b2f", borderRadius: [8, 8, 0, 0] },
           },
         ],

@@ -2,8 +2,12 @@ package views
 
 import (
 	"fmt"
+	"net/url"
 	"strings"
 	"time"
+
+	"github.com/a-h/templ"
+	terminal "github.com/buildkite/terminal-to-html/v3"
 )
 
 func statusClass(status string) string {
@@ -58,4 +62,30 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func RenderANSI(input string) templ.Component {
+	if strings.TrimSpace(input) == "" {
+		return templ.NopComponent
+	}
+	return templ.Raw(`<div class="term-container">` + terminal.Render([]byte(input)) + `</div>`)
+}
+
+func testHistoryURL(projectSlug, testKey string) templ.SafeURL {
+	return templ.URL("/projects/" + projectSlug + "/tests?test_key=" + url.QueryEscape(testKey))
+}
+
+func testDurationChartURL(projectSlug, testKey string) string {
+	return "/projects/" + projectSlug + "/tests/chart?test_key=" + url.QueryEscape(testKey)
+}
+
+func historyStatusClass(status string) string {
+	switch status {
+	case "failed":
+		return "bg-error border-error/30"
+	case "skipped":
+		return "bg-warning border-warning/30"
+	default:
+		return "bg-success border-success/30"
+	}
 }

@@ -1,3 +1,14 @@
 @import "tailwindcss";
 @plugin "daisyui";
 @source "../../internal/views/**/*.templ";
+@import "./terminal.css";
+
+.term-container a {
+  color: inherit;
+  text-decoration: underline;
+  text-decoration-style: dashed;
+}
+
+.term-container a:hover {
+  color: #2882f9;
+}

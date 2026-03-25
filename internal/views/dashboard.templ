@@ -83,13 +83,59 @@ templ DashboardContent(project store.Project, data store.DashboardData, branch s
 				</div>
 				<div class="flex flex-col gap-3">
 					for _, item := range data.TopFailing {
-						<a class="flex justify-between items-center p-3 rounded-xl border border-base-200 bg-base-200 hover:bg-base-300 transition-colors" href={ templ.URL("/projects/" + project.Slug + "/tests/" + item.TestKey) }>
+						<a class="flex justify-between items-center p-3 rounded-xl border border-base-200 bg-base-200 hover:bg-base-300 transition-colors" href={ testHistoryURL(project.Slug, item.TestKey) }>
 							<span class="font-medium truncate mr-2">{ item.DisplayName }</span>
 							<span class="badge badge-error badge-sm">{ fmt.Sprintf("%d failures", item.FailureCount) }</span>
 						</a>
 					}
 					if len(data.TopFailing) == 0 {
 						<p class="text-base-content/60 italic text-center py-4">No failing tests recorded yet.</p>
+					}
+				</div>
+			</div>
+		</section>
+
+		<section class="card bg-base-100 shadow-xl border border-base-200 md:col-span-2 xl:col-span-1">
+			<div class="card-body">
+				<div class="mb-4">
+					<p class="text-sm font-semibold uppercase tracking-wider text-base-content/60 mb-1">Instability</p>
+					<h2 class="text-2xl font-bold">Top flaky tests</h2>
+				</div>
+				<div class="flex flex-col gap-3">
+					for _, item := range data.TopFlaky {
+						<a class="p-3 rounded-xl border border-base-200 bg-base-200 hover:bg-base-300 transition-colors" href={ testHistoryURL(project.Slug, item.TestKey) }>
+							<div class="flex items-center justify-between gap-3">
+								<span class="font-medium truncate">{ item.DisplayName }</span>
+								<span class="badge badge-warning badge-sm">{ fmt.Sprintf("%d flips", item.TransitionCount) }</span>
+							</div>
+							<div class="text-xs text-base-content/60 mt-1">{ fmt.Sprintf("%d/%d failed in recent history", item.FailureCount, item.TotalCount) }</div>
+						</a>
+					}
+					if len(data.TopFlaky) == 0 {
+						<p class="text-base-content/60 italic text-center py-4">No flaky tests detected in recent history.</p>
+					}
+				</div>
+			</div>
+		</section>
+
+		<section class="card bg-base-100 shadow-xl border border-base-200 md:col-span-2 xl:col-span-1">
+			<div class="card-body">
+				<div class="mb-4">
+					<p class="text-sm font-semibold uppercase tracking-wider text-base-content/60 mb-1">Performance</p>
+					<h2 class="text-2xl font-bold">Slowest tests</h2>
+				</div>
+				<div class="flex flex-col gap-3">
+					for _, item := range data.SlowestTests {
+						<a class="p-3 rounded-xl border border-base-200 bg-base-200 hover:bg-base-300 transition-colors" href={ testHistoryURL(project.Slug, item.TestKey) }>
+							<div class="flex items-center justify-between gap-3">
+								<span class="font-medium truncate">{ item.DisplayName }</span>
+								<span class="badge badge-neutral badge-sm">{ formatMillis(item.AverageDurationMillis) }</span>
+							</div>
+							<div class="text-xs text-base-content/60 mt-1">{ fmt.Sprintf("%d recent runs", item.SampleCount) }</div>
+						</a>
+					}
+					if len(data.SlowestTests) == 0 {
+						<p class="text-base-content/60 italic text-center py-4">No duration data recorded yet.</p>
 					}
 				</div>
 			</div>

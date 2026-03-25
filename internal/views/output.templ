@@ -1,0 +1,22 @@
+package views
+
+templ OutputBlock(title string, body string) {
+	if body != "" {
+		<div class="mt-3">
+			<div class="text-[11px] font-semibold uppercase tracking-wider text-base-content/50 mb-2">{ title }</div>
+			<div class="rounded-xl overflow-hidden border border-base-content/10 bg-neutral text-neutral-content shadow-sm">
+				@RenderANSI(body)
+			</div>
+		</div>
+	}
+}
+
+templ RecentStatusDots(statuses []string) {
+	if len(statuses) > 0 {
+		<div class="flex flex-wrap items-center gap-1.5" title="Recent status history">
+			for _, status := range statuses {
+				<span class={ "inline-block h-2.5 w-2.5 rounded-full border " + historyStatusClass(status) }></span>
+			}
+		</div>
+	}
+}

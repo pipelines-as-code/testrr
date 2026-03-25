@@ -32,6 +32,10 @@ type Repository interface {
 	GetDashboardData(context.Context, string, string, int) (DashboardData, error)
 	GetChartSummary(context.Context, string, string, int) (ChartSummary, error)
 	GetTestHistory(context.Context, string, string, int) ([]TestHistoryEntry, error)
+	GetTestDurationChart(context.Context, string, string, int) (TestDurationChart, error)
+	GetRecentTestStatuses(context.Context, string, string, []string, int) (map[string][]string, error)
+	GetFlakyTests(context.Context, string, string, int) ([]FlakyTest, error)
+	GetSlowestTests(context.Context, string, string, int) ([]SlowTest, error)
 }
 
 type SQLStore struct {
@@ -127,6 +131,8 @@ type DashboardData struct {
 	Latest        *Run          `json:"latest,omitempty"`
 	RecentRuns    []Run         `json:"recent_runs"`
 	TopFailing    []FailingTest `json:"top_failing"`
+	TopFlaky      []FlakyTest   `json:"top_flaky"`
+	SlowestTests  []SlowTest    `json:"slowest_tests"`
 	TotalRuns     int           `json:"total_runs"`
 	TotalFailures int           `json:"total_failures"`
 }
@@ -135,6 +141,21 @@ type FailingTest struct {
 	TestKey      string `json:"test_key"`
 	DisplayName  string `json:"display_name"`
 	FailureCount int    `json:"failure_count"`
+}
+
+type FlakyTest struct {
+	TestKey         string `json:"test_key"`
+	DisplayName     string `json:"display_name"`
+	TransitionCount int    `json:"transition_count"`
+	FailureCount    int    `json:"failure_count"`
+	TotalCount      int    `json:"total_count"`
+}
+
+type SlowTest struct {
+	TestKey               string `json:"test_key"`
+	DisplayName           string `json:"display_name"`
+	AverageDurationMillis int64  `json:"average_duration_millis"`
+	SampleCount           int    `json:"sample_count"`
 }
 
 type ChartSummary struct {
@@ -152,6 +173,15 @@ type TestHistoryEntry struct {
 	DurationMillis int64     `json:"duration_millis"`
 	UploadedAt     time.Time `json:"uploaded_at"`
 	FailureMessage string    `json:"failure_message"`
+	FailureOutput  string    `json:"failure_output"`
+	SystemOut      string    `json:"system_out"`
+	SystemErr      string    `json:"system_err"`
+}
+
+type TestDurationChart struct {
+	Labels    []string `json:"labels"`
+	Durations []int64  `json:"durations"`
+	Statuses  []string `json:"statuses"`
 }
 
 func Open(ctx context.Context, databaseURL string) (*SQLStore, error) {
@@ -528,27 +558,25 @@ func (s *SQLStore) GetDashboardData(ctx context.Context, projectID, branch strin
 		data.TotalFailures += run.FailedCount
 	}
 
-	rows, err := s.db.QueryContext(ctx, s.rebind(`
-		SELECT test_key, COALESCE(MAX(test_name), test_key) AS display_name, COUNT(*)
-		FROM test_results
-		WHERE project_id = ? AND status = 'failed'
-		GROUP BY test_key
-		ORDER BY COUNT(*) DESC, test_key
-		LIMIT 5
-	`), projectID)
+	topFailing, err := s.getTopFailingTests(ctx, projectID, branch, 5)
 	if err != nil {
 		return DashboardData{}, err
 	}
-	defer rows.Close()
+	data.TopFailing = topFailing
 
-	for rows.Next() {
-		var failing FailingTest
-		if err := rows.Scan(&failing.TestKey, &failing.DisplayName, &failing.FailureCount); err != nil {
-			return DashboardData{}, err
-		}
-		data.TopFailing = append(data.TopFailing, failing)
+	topFlaky, err := s.GetFlakyTests(ctx, projectID, branch, 5)
+	if err != nil {
+		return DashboardData{}, err
 	}
-	return data, rows.Err()
+	data.TopFlaky = topFlaky
+
+	slowest, err := s.GetSlowestTests(ctx, projectID, branch, 5)
+	if err != nil {
+		return DashboardData{}, err
+	}
+	data.SlowestTests = slowest
+
+	return data, nil
 }
 
 func (s *SQLStore) GetChartSummary(ctx context.Context, projectID, branch string, limit int) (ChartSummary, error) {
@@ -586,7 +614,7 @@ func (s *SQLStore) GetChartSummary(ctx context.Context, projectID, branch string
 
 func (s *SQLStore) GetTestHistory(ctx context.Context, projectID, testKey string, limit int) ([]TestHistoryEntry, error) {
 	rows, err := s.db.QueryContext(ctx, s.rebind(`
-		SELECT r.id, r.run_label, r.branch, tr.status, tr.duration_millis, r.uploaded_at, tr.failure_message
+		SELECT r.id, r.run_label, r.branch, tr.status, tr.duration_millis, r.uploaded_at, tr.failure_message, tr.failure_output, tr.system_out, tr.system_err
 		FROM test_results tr
 		INNER JOIN runs r ON r.id = tr.run_id
 		WHERE tr.project_id = ? AND tr.test_key = ?
@@ -602,7 +630,18 @@ func (s *SQLStore) GetTestHistory(ctx context.Context, projectID, testKey string
 	for rows.Next() {
 		var entry TestHistoryEntry
 		var uploadedAt string
-		if err := rows.Scan(&entry.RunID, &entry.RunLabel, &entry.Branch, &entry.Status, &entry.DurationMillis, &uploadedAt, &entry.FailureMessage); err != nil {
+		if err := rows.Scan(
+			&entry.RunID,
+			&entry.RunLabel,
+			&entry.Branch,
+			&entry.Status,
+			&entry.DurationMillis,
+			&uploadedAt,
+			&entry.FailureMessage,
+			&entry.FailureOutput,
+			&entry.SystemOut,
+			&entry.SystemErr,
+		); err != nil {
 			return nil, err
 		}
 		entry.UploadedAt = parseTime(uploadedAt)

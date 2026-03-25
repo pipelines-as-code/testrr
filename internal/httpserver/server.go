@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -49,7 +50,7 @@ func New(cfg config.Config, repo store.Repository, parsers parser.Registry) (*Se
 		return nil, fmt.Errorf("create artifacts dir: %w", err)
 	}
 
-		return &Server{
+	return &Server{
 		cfg:       cfg,
 		repo:      repo,
 		parsers:   parsers,
@@ -65,7 +66,9 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	mux.HandleFunc("GET /projects/{slug}", s.handleDashboard)
 	mux.HandleFunc("GET /projects/{slug}/runs", s.handleRunsPage)
 	mux.HandleFunc("GET /projects/{slug}/runs/{runID}", s.handleRunPage)
+	mux.HandleFunc("GET /projects/{slug}/tests", s.handleTestPage)
 	mux.HandleFunc("GET /projects/{slug}/tests/{testKey}", s.handleTestPage)
+	mux.HandleFunc("GET /projects/{slug}/tests/chart", s.handleTestDurationChart)
 	mux.HandleFunc("GET /projects/{slug}/charts/summary", s.handleChartSummary)
 	mux.HandleFunc("POST /api/v1/projects/{slug}/runs", s.handleUploadAPI)
 	mux.HandleFunc("GET /api/v1/projects/{slug}/runs", s.handleListRunsAPI)
@@ -129,7 +132,21 @@ func (s *Server) handleRunPage(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unable to load run results", http.StatusInternalServerError)
 		return
 	}
-	s.render(w, http.StatusOK, views.RunPage(project, run, results))
+	testKeys := make([]string, 0, len(results))
+	seen := make(map[string]struct{}, len(results))
+	for _, result := range results {
+		if _, ok := seen[result.TestKey]; ok {
+			continue
+		}
+		seen[result.TestKey] = struct{}{}
+		testKeys = append(testKeys, result.TestKey)
+	}
+	recentStatuses, err := s.repo.GetRecentTestStatuses(r.Context(), project.ID, run.Branch, testKeys, 6)
+	if err != nil {
+		http.Error(w, "unable to load run history", http.StatusInternalServerError)
+		return
+	}
+	s.render(w, http.StatusOK, views.RunPage(project, run, groupRunResults(results, recentStatuses)))
 }
 
 func (s *Server) handleTestPage(w http.ResponseWriter, r *http.Request) {
@@ -138,13 +155,36 @@ func (s *Server) handleTestPage(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "project not found", http.StatusNotFound)
 		return
 	}
-	testKey := r.PathValue("testKey")
+	testKey := requestedTestKey(r)
+	if testKey == "" {
+		http.Error(w, "test key is required", http.StatusBadRequest)
+		return
+	}
 	history, err := s.repo.GetTestHistory(r.Context(), project.ID, testKey, 30)
 	if err != nil {
 		http.Error(w, "unable to load test history", http.StatusInternalServerError)
 		return
 	}
 	s.render(w, http.StatusOK, views.TestPage(project, testKey, history))
+}
+
+func (s *Server) handleTestDurationChart(w http.ResponseWriter, r *http.Request) {
+	project, err := s.loadProject(r.Context(), r.PathValue("slug"))
+	if err != nil {
+		http.Error(w, "project not found", http.StatusNotFound)
+		return
+	}
+	testKey := requestedTestKey(r)
+	if testKey == "" {
+		http.Error(w, "test key is required", http.StatusBadRequest)
+		return
+	}
+	chart, err := s.repo.GetTestDurationChart(r.Context(), project.ID, testKey, 30)
+	if err != nil {
+		http.Error(w, "unable to load test chart", http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusOK, chart)
 }
 
 func (s *Server) handleChartSummary(w http.ResponseWriter, r *http.Request) {
@@ -431,6 +471,36 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func requestedTestKey(r *http.Request) string {
+	return firstNonEmpty(r.URL.Query().Get("test_key"), r.PathValue("testKey"))
+}
+
+func groupRunResults(results []store.TestResult, recentStatuses map[string][]string) []views.RunResultGroup {
+	buckets := make(map[string][]views.RunResultRow)
+	order := make([]string, 0)
+
+	for _, result := range results {
+		groupName := firstNonEmpty(result.SuiteName, result.FileName, result.ClassName, "Ungrouped")
+		if _, ok := buckets[groupName]; !ok {
+			order = append(order, groupName)
+		}
+		buckets[groupName] = append(buckets[groupName], views.RunResultRow{
+			Result:         result,
+			RecentStatuses: recentStatuses[result.TestKey],
+		})
+	}
+
+	sort.Strings(order)
+	groups := make([]views.RunResultGroup, 0, len(order))
+	for _, groupName := range order {
+		groups = append(groups, views.RunResultGroup{
+			Name:    groupName,
+			Results: buckets[groupName],
+		})
+	}
+	return groups
 }
 
 func sanitizeFileName(value string) string {

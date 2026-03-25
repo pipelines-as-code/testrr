@@ -4,6 +4,7 @@ go 1.26.1
 
 require (
 	github.com/a-h/templ v0.3.1001
+	github.com/buildkite/terminal-to-html/v3 v3.16.8
 	github.com/jackc/pgx/v5 v5.7.6
 	golang.org/x/crypto v0.43.0
 	modernc.org/sqlite v1.40.1
