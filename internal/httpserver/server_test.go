@@ -3,6 +3,7 @@ package httpserver
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -20,6 +21,8 @@ import (
 	"testrr/internal/config"
 	"testrr/internal/parser"
 	"testrr/internal/store"
+
+	_ "modernc.org/sqlite"
 )
 
 func TestServerDashboardIsPublicAndDoesNotExposeUploadForm(t *testing.T) {
@@ -240,7 +243,7 @@ func TestServerAPIUploadAggregatesMultipleReportFormats(t *testing.T) {
 func TestServerAPIUploadFailedImportCreatesFailedRun(t *testing.T) {
 	t.Parallel()
 
-	serverURL, cleanup := newTestServer(t)
+	serverURL, dataDir, cleanup := newTestServerWithDataDir(t)
 	defer cleanup()
 
 	client := &http.Client{}
@@ -284,6 +287,94 @@ func TestServerAPIUploadFailedImportCreatesFailedRun(t *testing.T) {
 	}
 	if len(runs) != 1 || runs[0].Status != "failed_import" {
 		t.Fatalf("expected failed import run in listing, got %+v", runs)
+	}
+
+	matches, err := filepath.Glob(filepath.Join(dataDir, "artifacts", "*", "*.gz"))
+	if err != nil {
+		t.Fatalf("glob failed artifacts: %v", err)
+	}
+	if len(matches) != 1 {
+		t.Fatalf("expected failed import artifact to be retained, got %d files", len(matches))
+	}
+}
+
+func TestServerSuccessfulParseDoesNotRetainArtifactsOrPassedOutputs(t *testing.T) {
+	t.Parallel()
+
+	serverURL, dataDir, cleanup := newTestServerWithDataDir(t)
+	defer cleanup()
+
+	report := `<testsuites>
+  <testsuite name="suite-a" package="pkg/a">
+    <testcase classname="pkg/a.E2E" name="TestPassed" time="0.05">
+      <system-out>passed stdout</system-out>
+    </testcase>
+  </testsuite>
+</testsuites>`
+
+	client := &http.Client{}
+	uploadResp, err := postMultipartContentsWithBasicAuth(client, serverURL+"/api/v1/projects/demo/runs", "demo-user", "secret", map[string]string{
+		"branch":    "main",
+		"run_label": "passed-run",
+	}, "passed.xml", []byte(report))
+	if err != nil {
+		t.Fatalf("api upload: %v", err)
+	}
+	defer uploadResp.Body.Close()
+	if uploadResp.StatusCode != http.StatusCreated {
+		t.Fatalf("expected created response, got %d", uploadResp.StatusCode)
+	}
+
+	var created store.Run
+	if err := json.NewDecoder(uploadResp.Body).Decode(&created); err != nil {
+		t.Fatalf("decode created run: %v", err)
+	}
+
+	request, err := http.NewRequest(http.MethodGet, serverURL+"/api/v1/projects/demo/runs/"+created.ID, nil)
+	if err != nil {
+		t.Fatalf("new get run request: %v", err)
+	}
+	request.SetBasicAuth("demo-user", "secret")
+	runResp, err := client.Do(request)
+	if err != nil {
+		t.Fatalf("get run: %v", err)
+	}
+	defer runResp.Body.Close()
+
+	var runPayload struct {
+		Run     store.Run          `json:"run"`
+		Results []store.TestResult `json:"results"`
+	}
+	if err := json.NewDecoder(runResp.Body).Decode(&runPayload); err != nil {
+		t.Fatalf("decode run payload: %v", err)
+	}
+	if len(runPayload.Results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(runPayload.Results))
+	}
+	if runPayload.Results[0].SystemOut != "" || runPayload.Results[0].SystemErr != "" || runPayload.Results[0].FailureOutput != "" {
+		t.Fatalf("expected passed test outputs to be discarded, got %+v", runPayload.Results[0])
+	}
+
+	matches, err := filepath.Glob(filepath.Join(dataDir, "artifacts", "*", "*.gz"))
+	if err != nil {
+		t.Fatalf("glob stored artifacts: %v", err)
+	}
+	if len(matches) != 0 {
+		t.Fatalf("expected successful parse artifacts to be discarded, got %d files", len(matches))
+	}
+
+	db, err := sql.Open("sqlite", filepath.Join(dataDir, "testrr.sqlite"))
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	defer db.Close()
+
+	var retainedArtifacts int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM run_artifacts WHERE file_path <> ''`).Scan(&retainedArtifacts); err != nil {
+		t.Fatalf("count retained artifacts: %v", err)
+	}
+	if retainedArtifacts != 0 {
+		t.Fatalf("expected no retained parsed artifacts, got %d", retainedArtifacts)
 	}
 }
 
@@ -423,6 +514,11 @@ func TestSortRunResults(t *testing.T) {
 }
 
 func newTestServer(t *testing.T) (string, func()) {
+	serverURL, _, cleanup := newTestServerWithDataDir(t)
+	return serverURL, cleanup
+}
+
+func newTestServerWithDataDir(t *testing.T) (string, string, func()) {
 	t.Helper()
 
 	dataDir := t.TempDir()
@@ -463,7 +559,7 @@ func newTestServer(t *testing.T) (string, func()) {
 	}
 
 	ts := httptest.NewServer(server)
-	return ts.URL, func() {
+	return ts.URL, dataDir, func() {
 		ts.Close()
 		repo.Close()
 	}

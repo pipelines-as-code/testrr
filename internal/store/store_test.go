@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -366,6 +367,320 @@ func TestSQLStorePruneTestOutputsKeepsRunHistory(t *testing.T) {
 	}
 }
 
+func TestSQLStoreCreateRunDeduplicatesOutputBlobs(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	repo := newTestStore(t)
+	defer repo.Close()
+
+	if err := repo.Migrate(ctx); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+
+	project, err := repo.CreateProject(ctx, CreateProjectInput{
+		ID:           "project-output-dedup",
+		Slug:         "output-dedup",
+		Name:         "Output Dedup",
+		Username:     "demo",
+		PasswordHash: "hash",
+		CreatedAt:    time.Now().UTC(),
+	})
+	if err != nil {
+		t.Fatalf("create project: %v", err)
+	}
+
+	run := Run{
+		ID:             "run-output-dedup",
+		ProjectID:      project.ID,
+		Branch:         "main",
+		RunLabel:       "output-dedup",
+		Status:         "complete",
+		StartedAt:      time.Now().UTC(),
+		UploadedAt:     time.Now().UTC(),
+		TotalCount:     2,
+		FailedCount:    2,
+		DurationMillis: 42,
+	}
+	sharedOutput := "same failure output"
+	if _, err := repo.CreateRun(ctx, CreateRunInput{
+		Run: run,
+		TestResults: []TestResult{
+			{
+				ID:            "result-output-dedup-1",
+				RunID:         run.ID,
+				ProjectID:     project.ID,
+				TestKey:       "pkg::suite::TestOne",
+				SuiteName:     "suite",
+				ClassName:     "suite",
+				TestName:      "TestOne",
+				Status:        "failed",
+				FailureOutput: sharedOutput,
+			},
+			{
+				ID:            "result-output-dedup-2",
+				RunID:         run.ID,
+				ProjectID:     project.ID,
+				TestKey:       "pkg::suite::TestTwo",
+				SuiteName:     "suite",
+				ClassName:     "suite",
+				TestName:      "TestTwo",
+				Status:        "failed",
+				FailureOutput: sharedOutput,
+			},
+		},
+	}); err != nil {
+		t.Fatalf("create run: %v", err)
+	}
+
+	var blobCount int
+	if err := repo.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM output_blobs`).Scan(&blobCount); err != nil {
+		t.Fatalf("count output blobs: %v", err)
+	}
+	if blobCount != 1 {
+		t.Fatalf("expected 1 deduplicated output blob, got %d", blobCount)
+	}
+
+	var outputRows int
+	if err := repo.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM test_result_outputs`).Scan(&outputRows); err != nil {
+		t.Fatalf("count test result outputs: %v", err)
+	}
+	if outputRows != 2 {
+		t.Fatalf("expected 2 output references, got %d", outputRows)
+	}
+}
+
+func TestSQLStorePruneRunsDeletesArtifactsAndOrphanedBlobs(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	repo := newTestStore(t)
+	defer repo.Close()
+
+	if err := repo.Migrate(ctx); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+
+	project, err := repo.CreateProject(ctx, CreateProjectInput{
+		ID:           "project-run-prune",
+		Slug:         "run-prune",
+		Name:         "Run Prune",
+		Username:     "demo",
+		PasswordHash: "hash",
+		CreatedAt:    time.Now().UTC(),
+	})
+	if err != nil {
+		t.Fatalf("create project: %v", err)
+	}
+
+	artifactDir := t.TempDir()
+	artifactPath := filepath.Join(artifactDir, "report.xml.gz")
+	if err := os.WriteFile(artifactPath, []byte("artifact"), 0o644); err != nil {
+		t.Fatalf("write artifact: %v", err)
+	}
+
+	run := Run{
+		ID:             "run-prune-full",
+		ProjectID:      project.ID,
+		Branch:         "main",
+		RunLabel:       "run-prune-full",
+		Status:         "complete",
+		StartedAt:      time.Now().UTC().Add(-48 * time.Hour),
+		UploadedAt:     time.Now().UTC().Add(-48 * time.Hour),
+		TotalCount:     1,
+		FailedCount:    1,
+		DurationMillis: 12,
+	}
+	if _, err := repo.CreateRun(ctx, CreateRunInput{
+		Run: run,
+		Artifacts: []Artifact{{
+			ID:          "artifact-prune-full",
+			RunID:       run.ID,
+			FileName:    "report.xml",
+			Format:      "junit",
+			FilePath:    artifactPath,
+			Checksum:    "sum",
+			SizeBytes:   8,
+			ParseStatus: "failed",
+		}},
+		TestResults: []TestResult{{
+			ID:            "result-prune-full",
+			RunID:         run.ID,
+			ProjectID:     project.ID,
+			TestKey:       "pkg::suite::TestPrune",
+			SuiteName:     "suite",
+			ClassName:     "suite",
+			TestName:      "TestPrune",
+			Status:        "failed",
+			FailureOutput: "prune me",
+		}},
+	}); err != nil {
+		t.Fatalf("create run: %v", err)
+	}
+
+	prunedRuns, err := repo.PruneRuns(ctx, time.Now().UTC().Add(-24*time.Hour))
+	if err != nil {
+		t.Fatalf("prune runs: %v", err)
+	}
+	if prunedRuns != 1 {
+		t.Fatalf("expected 1 pruned run, got %d", prunedRuns)
+	}
+	if _, err := os.Stat(artifactPath); !os.IsNotExist(err) {
+		t.Fatalf("expected artifact to be deleted, stat err=%v", err)
+	}
+
+	var runCount int
+	if err := repo.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM runs WHERE id = ?`, run.ID).Scan(&runCount); err != nil {
+		t.Fatalf("count pruned runs: %v", err)
+	}
+	if runCount != 0 {
+		t.Fatalf("expected run to be deleted, got %d", runCount)
+	}
+
+	var blobCount int
+	if err := repo.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM output_blobs`).Scan(&blobCount); err != nil {
+		t.Fatalf("count pruned blobs: %v", err)
+	}
+	if blobCount != 0 {
+		t.Fatalf("expected orphaned output blobs to be deleted, got %d", blobCount)
+	}
+}
+
+func TestSQLStoreCreateRunNormalizesTestCatalog(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	repo := newTestStore(t)
+	defer repo.Close()
+
+	if err := repo.Migrate(ctx); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+
+	project, err := repo.CreateProject(ctx, CreateProjectInput{
+		ID:           "project-normalized",
+		Slug:         "normalized",
+		Name:         "Normalized",
+		Username:     "demo",
+		PasswordHash: "hash",
+		CreatedAt:    time.Now().UTC(),
+	})
+	if err != nil {
+		t.Fatalf("create project: %v", err)
+	}
+
+	testKey := "pkg::suite::TestShared"
+	firstRun := Run{
+		ID:             "run-normalized-1",
+		ProjectID:      project.ID,
+		Branch:         "main",
+		RunLabel:       "normalized-1",
+		Status:         "complete",
+		StartedAt:      time.Now().UTC(),
+		UploadedAt:     time.Now().UTC(),
+		TotalCount:     1,
+		PassedCount:    1,
+		DurationMillis: 10,
+	}
+	secondRun := Run{
+		ID:             "run-normalized-2",
+		ProjectID:      project.ID,
+		Branch:         "main",
+		RunLabel:       "normalized-2",
+		Status:         "complete",
+		StartedAt:      time.Now().UTC().Add(time.Minute),
+		UploadedAt:     time.Now().UTC().Add(time.Minute),
+		TotalCount:     1,
+		PassedCount:    1,
+		DurationMillis: 12,
+	}
+
+	for _, item := range []struct {
+		run    Run
+		result TestResult
+	}{
+		{
+			run: firstRun,
+			result: TestResult{
+				ID:        "result-normalized-1",
+				RunID:     firstRun.ID,
+				ProjectID: project.ID,
+				TestKey:   testKey,
+				SuiteName: "suite",
+				ClassName: "pkg.Suite",
+				TestName:  "TestShared",
+				Status:    "passed",
+			},
+		},
+		{
+			run: secondRun,
+			result: TestResult{
+				ID:        "result-normalized-2",
+				RunID:     secondRun.ID,
+				ProjectID: project.ID,
+				TestKey:   testKey,
+				SuiteName: "suite",
+				ClassName: "pkg.Suite",
+				TestName:  "TestShared",
+				Status:    "passed",
+			},
+		},
+	} {
+		if _, err := repo.CreateRun(ctx, CreateRunInput{
+			Run:         item.run,
+			TestResults: []TestResult{item.result},
+		}); err != nil {
+			t.Fatalf("create run %s: %v", item.run.ID, err)
+		}
+	}
+
+	var catalogCount int
+	if err := repo.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM tests WHERE project_id = ? AND test_key = ?`, project.ID, testKey).Scan(&catalogCount); err != nil {
+		t.Fatalf("count normalized tests: %v", err)
+	}
+	if catalogCount != 1 {
+		t.Fatalf("expected a single normalized test row, got %d", catalogCount)
+	}
+
+	rows, err := repo.db.QueryContext(ctx, `
+		SELECT test_id, project_id, test_key, suite_name, package_name, class_name, test_name, file_name
+		FROM test_results
+		ORDER BY id
+	`)
+	if err != nil {
+		t.Fatalf("load normalized result rows: %v", err)
+	}
+	defer rows.Close()
+
+	seen := 0
+	for rows.Next() {
+		var testID string
+		var projectID string
+		var storedTestKey string
+		var suiteName string
+		var packageName string
+		var className string
+		var testName string
+		var fileName string
+		if err := rows.Scan(&testID, &projectID, &storedTestKey, &suiteName, &packageName, &className, &testName, &fileName); err != nil {
+			t.Fatalf("scan normalized result row: %v", err)
+		}
+		if testID == "" {
+			t.Fatal("expected normalized test_id to be stored")
+		}
+		if projectID != project.ID || storedTestKey != "" || suiteName != "" || packageName != "" || className != "" || testName != "" || fileName != "" {
+			t.Fatalf("expected only project_id to remain on normalized rows, got project=%q key=%q suite=%q class=%q test=%q file=%q", projectID, storedTestKey, suiteName, className, testName, fileName)
+		}
+		seen++
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("load normalized result rows: %v", err)
+	}
+	if seen != 2 {
+		t.Fatalf("expected 2 normalized test rows, got %d", seen)
+	}
+}
+
 func TestSQLStoreMigrateBackfillsLegacyOutputs(t *testing.T) {
 	t.Parallel()
 
@@ -460,6 +775,31 @@ func TestSQLStoreMigrateBackfillsLegacyOutputs(t *testing.T) {
 	}
 	if storedOutputs != 1 {
 		t.Fatalf("expected 1 backfilled output row, got %d", storedOutputs)
+	}
+
+	var catalogCount int
+	if err := repo.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM tests WHERE project_id = ? AND test_key = ?`, "project-legacy", "pkg::suite::TestLegacy").Scan(&catalogCount); err != nil {
+		t.Fatalf("count backfilled tests: %v", err)
+	}
+	if catalogCount != 1 {
+		t.Fatalf("expected 1 backfilled normalized test row, got %d", catalogCount)
+	}
+
+	var testID string
+	var projectID string
+	var storedTestKey string
+	if err := repo.db.QueryRowContext(ctx, `
+		SELECT test_id, project_id, test_key
+		FROM test_results
+		WHERE id = ?
+	`, "result-legacy").Scan(&testID, &projectID, &storedTestKey); err != nil {
+		t.Fatalf("load migrated legacy result row: %v", err)
+	}
+	if testID == "" {
+		t.Fatal("expected migrated legacy result to have a normalized test_id")
+	}
+	if projectID != "project-legacy" || storedTestKey != "" {
+		t.Fatalf("expected migrated legacy duplicate fields to be cleared except project_id, got project=%q key=%q", projectID, storedTestKey)
 	}
 
 	results, err := repo.ListRunResults(ctx, "run-legacy")

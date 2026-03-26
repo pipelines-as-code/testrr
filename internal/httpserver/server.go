@@ -279,17 +279,23 @@ func (s *Server) ingestRun(w http.ResponseWriter, ctx context.Context, project s
 	}
 
 	runID := newID()
-	artifactsDir := filepath.Join(s.artifacts, runID)
-	if err := os.MkdirAll(artifactsDir, 0o755); err != nil {
-		return store.Run{}, fmt.Errorf("create run artifact dir: %w", err)
-	}
-
 	uploadedAt := time.Now().UTC()
 	startedAt := parseTimeOrDefault(r.FormValue("started_at"), uploadedAt)
 	branch := strings.TrimSpace(r.FormValue("branch"))
 	runLabel := strings.TrimSpace(r.FormValue("run_label"))
 	if runLabel == "" {
 		runLabel = firstNonEmpty(r.FormValue("build_id"), r.FormValue("commit_sha"), uploadedAt.Format("2006-01-02 15:04"))
+	}
+	storeArtifact := func(fileName string, contents []byte) (string, error) {
+		artifactsDir := filepath.Join(s.artifacts, runID)
+		if err := os.MkdirAll(artifactsDir, 0o755); err != nil {
+			return "", fmt.Errorf("create run artifact dir: %w", err)
+		}
+		artifactPath := filepath.Join(artifactsDir, sanitizeFileName(fileName)+".gz")
+		if err := writeGzipFile(artifactPath, contents); err != nil {
+			return "", err
+		}
+		return artifactPath, nil
 	}
 
 	previousRun, _ := s.repo.FindPreviousRun(ctx, project.ID, branch)
@@ -325,17 +331,11 @@ func (s *Server) ingestRun(w http.ResponseWriter, ctx context.Context, project s
 		}
 
 		checksum := fmt.Sprintf("%x", sha256.Sum256(contents))
-		artifactPath := filepath.Join(artifactsDir, sanitizeFileName(header.Filename)+".gz")
-		if err := writeGzipFile(artifactPath, contents); err != nil {
-			return store.Run{}, fmt.Errorf("store artifact %s: %w", header.Filename, err)
-		}
-
 		artifact := store.Artifact{
 			ID:          newID(),
 			RunID:       runID,
 			FileName:    header.Filename,
 			Format:      "junit",
-			FilePath:    artifactPath,
 			Checksum:    checksum,
 			SizeBytes:   int64(len(contents)),
 			ParseStatus: "parsed",
@@ -343,11 +343,23 @@ func (s *Server) ingestRun(w http.ResponseWriter, ctx context.Context, project s
 
 		parsedFiles, err := s.parsers.ParseFiles(ctx, []parser.UploadFile{{Name: header.Filename, Contents: contents}})
 		if err != nil {
+			artifactPath, writeErr := storeArtifact(header.Filename, contents)
+			if writeErr != nil {
+				return store.Run{}, fmt.Errorf("store failed artifact %s: %w", header.Filename, writeErr)
+			}
 			artifact.ParseStatus = "failed"
 			artifact.ParseError = err.Error()
+			artifact.FilePath = artifactPath
 			parseError = err.Error()
 			artifacts = append(artifacts, artifact)
 			break
+		}
+		if s.cfg.KeepParsedArtifacts {
+			artifactPath, writeErr := storeArtifact(header.Filename, contents)
+			if writeErr != nil {
+				return store.Run{}, fmt.Errorf("store artifact %s: %w", header.Filename, writeErr)
+			}
+			artifact.FilePath = artifactPath
 		}
 
 		for _, parsedFile := range parsedFiles {
@@ -372,6 +384,7 @@ func (s *Server) ingestRun(w http.ResponseWriter, ctx context.Context, project s
 					SystemErr:      parsed.SystemErr,
 					Regression:     regression,
 				}
+				applyOutputStoragePolicy(&result, s.cfg)
 				testResults = append(testResults, result)
 				totalCount++
 				durationMillis += result.DurationMillis
@@ -451,6 +464,22 @@ func writeJSON(w http.ResponseWriter, status int, value any) {
 	encoder := json.NewEncoder(w)
 	encoder.SetIndent("", "  ")
 	encoder.Encode(value)
+}
+
+func applyOutputStoragePolicy(result *store.TestResult, cfg config.Config) {
+	if !cfg.StoreAllTestOutputs && result.Status != "failed" {
+		result.FailureOutput = ""
+		result.SystemOut = ""
+		result.SystemErr = ""
+		result.FailureOutputTruncated = false
+		result.SystemOutTruncated = false
+		result.SystemErrTruncated = false
+		return
+	}
+
+	result.FailureOutput, result.FailureOutputTruncated = store.TruncateOutput(result.FailureOutput, cfg.MaxStoredOutputBytes)
+	result.SystemOut, result.SystemOutTruncated = store.TruncateOutput(result.SystemOut, cfg.MaxStoredOutputBytes)
+	result.SystemErr, result.SystemErrTruncated = store.TruncateOutput(result.SystemErr, cfg.MaxStoredOutputBytes)
 }
 
 func parseTimeOrDefault(raw string, fallback time.Time) time.Time {

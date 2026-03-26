@@ -169,6 +169,8 @@ func runStorageCommand(ctx context.Context, repository store.Repository, cfg con
 	}
 
 	switch args[0] {
+	case "compact":
+		return storageCompact(ctx, repository)
 	case "prune":
 		return storagePrune(ctx, repository, cfg, args[1:])
 	default:
@@ -176,30 +178,53 @@ func runStorageCommand(ctx context.Context, repository store.Repository, cfg con
 	}
 }
 
+func storageCompact(ctx context.Context, repository store.Repository) error {
+	if err := repository.Migrate(ctx); err != nil {
+		return err
+	}
+	if err := repository.Compact(ctx); err != nil {
+		return err
+	}
+	fmt.Println("storage compact complete")
+	return nil
+}
+
 func storagePrune(ctx context.Context, repository store.Repository, cfg config.Config, args []string) error {
 	fs := flag.NewFlagSet("storage prune", flag.ContinueOnError)
-	retentionDays := cfg.OutputRetentionDays
+	outputRetentionDays := cfg.OutputRetentionDays
+	runRetentionDays := cfg.RunRetentionDays
 	vacuum := true
-	fs.IntVar(&retentionDays, "retention-days", retentionDays, "delete stored test output older than this many days")
-	fs.BoolVar(&vacuum, "vacuum", vacuum, "run VACUUM after pruning sqlite output rows")
+	fs.IntVar(&outputRetentionDays, "retention-days", outputRetentionDays, "delete stored test output older than this many days")
+	fs.IntVar(&runRetentionDays, "run-retention-days", runRetentionDays, "delete runs and retained artifacts older than this many days")
+	fs.BoolVar(&vacuum, "vacuum", vacuum, "run VACUUM after pruning sqlite rows")
 	if err := fs.Parse(args); err != nil {
 		return fmt.Errorf("%w: %v", ErrUsage, err)
 	}
-	if retentionDays <= 0 {
+	if outputRetentionDays <= 0 {
 		return fmt.Errorf("%w: storage prune requires --retention-days to be greater than zero", ErrUsage)
+	}
+	if runRetentionDays <= 0 {
+		return fmt.Errorf("%w: storage prune requires --run-retention-days to be greater than zero", ErrUsage)
 	}
 	if err := repository.Migrate(ctx); err != nil {
 		return err
 	}
 
-	cutoff := time.Now().UTC().AddDate(0, 0, -retentionDays)
-	pruned, err := repository.PruneTestOutputs(ctx, cutoff)
+	outputCutoff := time.Now().UTC().AddDate(0, 0, -outputRetentionDays)
+	prunedOutputs, err := repository.PruneTestOutputs(ctx, outputCutoff)
 	if err != nil {
 		return err
 	}
-	fmt.Printf("pruned %d stored test outputs older than %s\n", pruned, cutoff.Format(time.RFC3339))
+	fmt.Printf("pruned %d stored test outputs older than %s\n", prunedOutputs, outputCutoff.Format(time.RFC3339))
 
-	if vacuum && pruned > 0 {
+	runCutoff := time.Now().UTC().AddDate(0, 0, -runRetentionDays)
+	prunedRuns, err := repository.PruneRuns(ctx, runCutoff)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("pruned %d runs older than %s\n", prunedRuns, runCutoff.Format(time.RFC3339))
+
+	if vacuum && (prunedOutputs > 0 || prunedRuns > 0) {
 		if err := repository.Compact(ctx); err != nil {
 			return err
 		}

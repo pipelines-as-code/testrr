@@ -11,12 +11,13 @@ const recentTestObservationLimit = 30
 
 func (s *SQLStore) getTopFailingTests(ctx context.Context, projectID, branch string, limit int) ([]FailingTest, error) {
 	rows, err := s.db.QueryContext(ctx, s.rebind(`
-		SELECT tr.test_key, COALESCE(MAX(NULLIF(tr.test_name, '')), tr.test_key) AS display_name, COUNT(*)
+		SELECT t.test_key, COALESCE(MAX(NULLIF(t.test_name, '')), t.test_key) AS display_name, COUNT(*)
 		FROM test_results tr
+		INNER JOIN tests t ON t.id = tr.test_id
 		INNER JOIN runs r ON r.id = tr.run_id
-		WHERE tr.project_id = ? AND tr.status = 'failed' AND (? = '' OR r.branch = ?)
-		GROUP BY tr.test_key
-		ORDER BY COUNT(*) DESC, tr.test_key
+		WHERE t.project_id = ? AND tr.status = 'failed' AND (? = '' OR r.branch = ?)
+		GROUP BY t.test_key
+		ORDER BY COUNT(*) DESC, t.test_key
 		LIMIT ?
 	`), projectID, branch, branch, limit)
 	if err != nil {
@@ -39,14 +40,15 @@ func (s *SQLStore) GetFlakyTests(ctx context.Context, projectID, branch string, 
 	rows, err := s.db.QueryContext(ctx, s.rebind(`
 		WITH recent AS (
 			SELECT
-				tr.test_key,
-				COALESCE(NULLIF(tr.test_name, ''), tr.test_key) AS display_name,
+				t.test_key,
+				COALESCE(NULLIF(t.test_name, ''), t.test_key) AS display_name,
 				tr.status,
 				r.uploaded_at,
-				ROW_NUMBER() OVER (PARTITION BY tr.test_key ORDER BY r.uploaded_at DESC) AS rn
+				ROW_NUMBER() OVER (PARTITION BY t.test_key ORDER BY r.uploaded_at DESC) AS rn
 			FROM test_results tr
+			INNER JOIN tests t ON t.id = tr.test_id
 			INNER JOIN runs r ON r.id = tr.run_id
-			WHERE tr.project_id = ? AND (? = '' OR r.branch = ?) AND tr.status IN ('passed', 'failed')
+			WHERE t.project_id = ? AND (? = '' OR r.branch = ?) AND tr.status IN ('passed', 'failed')
 		),
 		windowed AS (
 			SELECT test_key, display_name, status, uploaded_at
@@ -103,14 +105,15 @@ func (s *SQLStore) GetSlowestTests(ctx context.Context, projectID, branch string
 	rows, err := s.db.QueryContext(ctx, s.rebind(`
 		WITH recent AS (
 			SELECT
-				tr.test_key,
-				COALESCE(NULLIF(tr.test_name, ''), tr.test_key) AS display_name,
+				t.test_key,
+				COALESCE(NULLIF(t.test_name, ''), t.test_key) AS display_name,
 				tr.duration_millis,
 				r.uploaded_at,
-				ROW_NUMBER() OVER (PARTITION BY tr.test_key ORDER BY r.uploaded_at DESC) AS rn
+				ROW_NUMBER() OVER (PARTITION BY t.test_key ORDER BY r.uploaded_at DESC) AS rn
 			FROM test_results tr
+			INNER JOIN tests t ON t.id = tr.test_id
 			INNER JOIN runs r ON r.id = tr.run_id
-			WHERE tr.project_id = ? AND (? = '' OR r.branch = ?) AND tr.duration_millis > 0
+			WHERE t.project_id = ? AND (? = '' OR r.branch = ?) AND tr.duration_millis > 0
 		)
 		SELECT
 			test_key,
@@ -146,8 +149,9 @@ func (s *SQLStore) GetTestDurationChart(ctx context.Context, projectID, testKey 
 		WITH recent AS (
 			SELECT r.run_label, r.uploaded_at, tr.duration_millis, tr.status
 			FROM test_results tr
+			INNER JOIN tests t ON t.id = tr.test_id
 			INNER JOIN runs r ON r.id = tr.run_id
-			WHERE tr.project_id = ? AND tr.test_key = ?
+			WHERE t.project_id = ? AND t.test_key = ?
 			ORDER BY r.uploaded_at DESC
 			LIMIT ?
 		)
@@ -202,13 +206,14 @@ func (s *SQLStore) GetRecentTestStatuses(ctx context.Context, projectID, branch 
 	query := fmt.Sprintf(`
 		WITH ranked AS (
 			SELECT
-				tr.test_key,
+				t.test_key,
 				tr.status,
 				r.uploaded_at,
-				ROW_NUMBER() OVER (PARTITION BY tr.test_key ORDER BY r.uploaded_at DESC) AS rn
+				ROW_NUMBER() OVER (PARTITION BY t.test_key ORDER BY r.uploaded_at DESC) AS rn
 			FROM test_results tr
+			INNER JOIN tests t ON t.id = tr.test_id
 			INNER JOIN runs r ON r.id = tr.run_id
-			WHERE tr.project_id = ? AND (? = '' OR r.branch = ?) AND tr.test_key IN (%s)
+			WHERE t.project_id = ? AND (? = '' OR r.branch = ?) AND t.test_key IN (%s)
 		)
 		SELECT test_key, status
 		FROM ranked

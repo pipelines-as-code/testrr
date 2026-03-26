@@ -38,6 +38,7 @@ type Repository interface {
 	GetFlakyTests(context.Context, string, string, int) ([]FlakyTest, error)
 	GetSlowestTests(context.Context, string, string, int) ([]SlowTest, error)
 	PruneTestOutputs(context.Context, time.Time) (int64, error)
+	PruneRuns(context.Context, time.Time) (int64, error)
 }
 
 type SQLStore struct {
@@ -111,22 +112,25 @@ type Artifact struct {
 }
 
 type TestResult struct {
-	ID             string `json:"id"`
-	RunID          string `json:"run_id"`
-	ProjectID      string `json:"project_id"`
-	TestKey        string `json:"test_key"`
-	SuiteName      string `json:"suite_name"`
-	PackageName    string `json:"package_name"`
-	ClassName      string `json:"class_name"`
-	TestName       string `json:"test_name"`
-	FileName       string `json:"file_name"`
-	Status         string `json:"status"`
-	DurationMillis int64  `json:"duration_millis"`
-	FailureMessage string `json:"failure_message"`
-	FailureOutput  string `json:"failure_output"`
-	SystemOut      string `json:"system_out"`
-	SystemErr      string `json:"system_err"`
-	Regression     bool   `json:"regression"`
+	ID                     string `json:"id"`
+	RunID                  string `json:"run_id"`
+	ProjectID              string `json:"project_id"`
+	TestKey                string `json:"test_key"`
+	SuiteName              string `json:"suite_name"`
+	PackageName            string `json:"package_name"`
+	ClassName              string `json:"class_name"`
+	TestName               string `json:"test_name"`
+	FileName               string `json:"file_name"`
+	Status                 string `json:"status"`
+	DurationMillis         int64  `json:"duration_millis"`
+	FailureMessage         string `json:"failure_message"`
+	FailureOutput          string `json:"failure_output"`
+	SystemOut              string `json:"system_out"`
+	SystemErr              string `json:"system_err"`
+	Regression             bool   `json:"regression"`
+	FailureOutputTruncated bool   `json:"-"`
+	SystemOutTruncated     bool   `json:"-"`
+	SystemErrTruncated     bool   `json:"-"`
 }
 
 type DashboardData struct {
@@ -168,16 +172,19 @@ type ChartSummary struct {
 }
 
 type TestHistoryEntry struct {
-	RunID          string    `json:"run_id"`
-	RunLabel       string    `json:"run_label"`
-	Branch         string    `json:"branch"`
-	Status         string    `json:"status"`
-	DurationMillis int64     `json:"duration_millis"`
-	UploadedAt     time.Time `json:"uploaded_at"`
-	FailureMessage string    `json:"failure_message"`
-	FailureOutput  string    `json:"failure_output"`
-	SystemOut      string    `json:"system_out"`
-	SystemErr      string    `json:"system_err"`
+	RunID                  string    `json:"run_id"`
+	RunLabel               string    `json:"run_label"`
+	Branch                 string    `json:"branch"`
+	Status                 string    `json:"status"`
+	DurationMillis         int64     `json:"duration_millis"`
+	UploadedAt             time.Time `json:"uploaded_at"`
+	FailureMessage         string    `json:"failure_message"`
+	FailureOutput          string    `json:"failure_output"`
+	SystemOut              string    `json:"system_out"`
+	SystemErr              string    `json:"system_err"`
+	FailureOutputTruncated bool      `json:"-"`
+	SystemOutTruncated     bool      `json:"-"`
+	SystemErrTruncated     bool      `json:"-"`
 }
 
 type TestDurationChart struct {
@@ -253,6 +260,12 @@ func (s *SQLStore) Migrate(ctx context.Context) error {
 		if _, err := s.db.ExecContext(ctx, statement); err != nil {
 			return fmt.Errorf("run migration: %w", err)
 		}
+	}
+	if err := s.ensureOutputBlobSchema(ctx); err != nil {
+		return err
+	}
+	if err := s.ensureNormalizedTestCatalog(ctx); err != nil {
+		return err
 	}
 	if err := s.backfillLegacyTestResultOutputs(ctx); err != nil {
 		return err
@@ -461,21 +474,19 @@ func (s *SQLStore) CreateRun(ctx context.Context, input CreateRunInput) (Run, er
 	}
 
 	for _, result := range input.TestResults {
+		if err := s.upsertTestCatalogEntry(ctx, tx, result); err != nil {
+			return Run{}, err
+		}
 		if _, err := tx.ExecContext(ctx, s.rebind(`
 			INSERT INTO test_results (
-				id, run_id, project_id, test_key, suite_name, package_name, class_name, test_name, file_name,
+				id, run_id, test_id, project_id, test_key, suite_name, package_name, class_name, test_name, file_name,
 				status, duration_millis, failure_message, regression
-			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			) VALUES (?, ?, ?, ?, '', '', '', '', '', '', ?, ?, ?, ?)
 		`),
 			result.ID,
 			result.RunID,
+			stableTestID(result.ProjectID, result.TestKey),
 			result.ProjectID,
-			result.TestKey,
-			result.SuiteName,
-			result.PackageName,
-			result.ClassName,
-			result.TestName,
-			result.FileName,
 			result.Status,
 			result.DurationMillis,
 			result.FailureMessage,
@@ -520,12 +531,23 @@ func (s *SQLStore) GetRun(ctx context.Context, projectID, runID string) (Run, er
 
 func (s *SQLStore) ListRunResults(ctx context.Context, runID string) ([]TestResult, error) {
 	rows, err := s.db.QueryContext(ctx, s.rebind(`
-		SELECT tr.id, tr.run_id, tr.project_id, tr.test_key, tr.suite_name, tr.package_name, tr.class_name, tr.test_name, tr.file_name,
-			tr.status, tr.duration_millis, tr.failure_message, tro.failure_output, tro.system_out, tro.system_err, tr.regression
+		SELECT tr.id, tr.run_id, t.project_id, t.test_key, t.suite_name, t.package_name, t.class_name, t.test_name, t.file_name,
+			tr.status, tr.duration_millis, tr.failure_message,
+			COALESCE(fob.compressed_data, tro.failure_output),
+			COALESCE(tro.failure_output_truncated, 0),
+			COALESCE(sob.compressed_data, tro.system_out),
+			COALESCE(tro.system_out_truncated, 0),
+			COALESCE(seb.compressed_data, tro.system_err),
+			COALESCE(tro.system_err_truncated, 0),
+			tr.regression
 		FROM test_results tr
+		INNER JOIN tests t ON t.id = tr.test_id
 		LEFT JOIN test_result_outputs tro ON tro.test_result_id = tr.id
+		LEFT JOIN output_blobs fob ON fob.id = tro.failure_output_blob_id
+		LEFT JOIN output_blobs sob ON sob.id = tro.system_out_blob_id
+		LEFT JOIN output_blobs seb ON seb.id = tro.system_err_blob_id
 		WHERE tr.run_id = ?
-		ORDER BY status DESC, test_name
+		ORDER BY tr.status DESC, t.test_name
 	`), runID)
 	if err != nil {
 		return nil, err
@@ -534,41 +556,10 @@ func (s *SQLStore) ListRunResults(ctx context.Context, runID string) ([]TestResu
 
 	results := make([]TestResult, 0)
 	for rows.Next() {
-		var result TestResult
-		var regression int
-		var failureOutput []byte
-		var systemOut []byte
-		var systemErr []byte
-		if err := rows.Scan(
-			&result.ID,
-			&result.RunID,
-			&result.ProjectID,
-			&result.TestKey,
-			&result.SuiteName,
-			&result.PackageName,
-			&result.ClassName,
-			&result.TestName,
-			&result.FileName,
-			&result.Status,
-			&result.DurationMillis,
-			&result.FailureMessage,
-			&failureOutput,
-			&systemOut,
-			&systemErr,
-			&regression,
-		); err != nil {
+		result, err := scanTestResultRow(rows, true)
+		if err != nil {
 			return nil, err
 		}
-		if result.FailureOutput, err = decompressOutput(failureOutput); err != nil {
-			return nil, err
-		}
-		if result.SystemOut, err = decompressOutput(systemOut); err != nil {
-			return nil, err
-		}
-		if result.SystemErr, err = decompressOutput(systemErr); err != nil {
-			return nil, err
-		}
-		result.Regression = regression == 1
 		results = append(results, result)
 	}
 	return results, rows.Err()
@@ -645,11 +636,28 @@ func (s *SQLStore) GetChartSummary(ctx context.Context, projectID, branch string
 
 func (s *SQLStore) GetTestHistory(ctx context.Context, projectID, testKey string, limit int) ([]TestHistoryEntry, error) {
 	rows, err := s.db.QueryContext(ctx, s.rebind(`
-		SELECT r.id, r.run_label, r.branch, tr.status, tr.duration_millis, r.uploaded_at, tr.failure_message, tro.failure_output, tro.system_out, tro.system_err
+		SELECT
+			r.id,
+			r.run_label,
+			r.branch,
+			tr.status,
+			tr.duration_millis,
+			r.uploaded_at,
+			tr.failure_message,
+			COALESCE(fob.compressed_data, tro.failure_output),
+			COALESCE(tro.failure_output_truncated, 0),
+			COALESCE(sob.compressed_data, tro.system_out),
+			COALESCE(tro.system_out_truncated, 0),
+			COALESCE(seb.compressed_data, tro.system_err),
+			COALESCE(tro.system_err_truncated, 0)
 		FROM test_results tr
+		INNER JOIN tests t ON t.id = tr.test_id
 		INNER JOIN runs r ON r.id = tr.run_id
 		LEFT JOIN test_result_outputs tro ON tro.test_result_id = tr.id
-		WHERE tr.project_id = ? AND tr.test_key = ?
+		LEFT JOIN output_blobs fob ON fob.id = tro.failure_output_blob_id
+		LEFT JOIN output_blobs sob ON sob.id = tro.system_out_blob_id
+		LEFT JOIN output_blobs seb ON seb.id = tro.system_err_blob_id
+		WHERE t.project_id = ? AND t.test_key = ?
 		ORDER BY r.uploaded_at DESC
 		LIMIT ?
 	`), projectID, testKey, limit)
@@ -662,9 +670,12 @@ func (s *SQLStore) GetTestHistory(ctx context.Context, projectID, testKey string
 	for rows.Next() {
 		var entry TestHistoryEntry
 		var uploadedAt string
-		var failureOutput []byte
-		var systemOut []byte
-		var systemErr []byte
+		var failureOutput sql.Null[[]byte]
+		var failureOutputTruncated int
+		var systemOut sql.Null[[]byte]
+		var systemOutTruncated int
+		var systemErr sql.Null[[]byte]
+		var systemErrTruncated int
 		if err := rows.Scan(
 			&entry.RunID,
 			&entry.RunLabel,
@@ -674,21 +685,33 @@ func (s *SQLStore) GetTestHistory(ctx context.Context, projectID, testKey string
 			&uploadedAt,
 			&entry.FailureMessage,
 			&failureOutput,
+			&failureOutputTruncated,
 			&systemOut,
+			&systemOutTruncated,
 			&systemErr,
+			&systemErrTruncated,
 		); err != nil {
 			return nil, err
 		}
 		entry.UploadedAt = parseTime(uploadedAt)
-		if entry.FailureOutput, err = decompressOutput(failureOutput); err != nil {
-			return nil, err
+		if failureOutput.Valid {
+			if entry.FailureOutput, err = decompressOutput(failureOutput.V); err != nil {
+				return nil, err
+			}
 		}
-		if entry.SystemOut, err = decompressOutput(systemOut); err != nil {
-			return nil, err
+		entry.FailureOutput = formatStoredOutput(entry.FailureOutput, failureOutputTruncated == 1)
+		if systemOut.Valid {
+			if entry.SystemOut, err = decompressOutput(systemOut.V); err != nil {
+				return nil, err
+			}
 		}
-		if entry.SystemErr, err = decompressOutput(systemErr); err != nil {
-			return nil, err
+		entry.SystemOut = formatStoredOutput(entry.SystemOut, systemOutTruncated == 1)
+		if systemErr.Valid {
+			if entry.SystemErr, err = decompressOutput(systemErr.V); err != nil {
+				return nil, err
+			}
 		}
+		entry.SystemErr = formatStoredOutput(entry.SystemErr, systemErrTruncated == 1)
 		history = append(history, entry)
 	}
 	return history, rows.Err()
