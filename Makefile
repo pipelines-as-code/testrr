@@ -3,7 +3,9 @@ BIN_DIR := bin
 BIN := $(BIN_DIR)/$(APP)
 TEMPL_CMD := go run github.com/a-h/templ/cmd/templ@v0.3.1001
 
-.PHONY: help deps generate assets fmt lint test build e2e run clean check sample-upload
+DEPLOY_HOST := webhook.pipelinesascode.com
+
+.PHONY: help deps generate assets fmt lint test build e2e run clean check sample-upload deploy
 
 help:
 	@printf "%s\n" \
@@ -19,6 +21,7 @@ help:
 		"  make run       - run the server locally" \
 		"  make sample-upload - create sample projects and upload sample timelines" \
 		"  make clean     - remove built artifacts" \
+		"  make deploy    - cross-compile for Linux amd64 and scp to $(DEPLOY_HOST):/tmp" \
 		"  make check     - run generate, assets, lint, test, and build"
 
 deps:
@@ -57,5 +60,10 @@ sample-upload: build
 clean:
 	rm -rf $(BIN_DIR)
 	rm -rf web/dist
+
+deploy: generate assets
+	mkdir -p $(BIN_DIR)
+	GOOS=linux GOARCH=amd64 go build -o $(BIN_DIR)/$(APP)-linux-amd64 ./cmd/testrr
+	rsync -avzP $(BIN_DIR)/$(APP)-linux-amd64 $(DEPLOY_HOST):/tmp/$(APP)
 
 check: generate assets lint test build

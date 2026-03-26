@@ -35,6 +35,7 @@ type Repository interface {
 	GetTestHistory(context.Context, string, string, int) ([]TestHistoryEntry, error)
 	GetTestDurationChart(context.Context, string, string, int) (TestDurationChart, error)
 	GetRecentTestStatuses(context.Context, string, string, []string, int) (map[string][]string, error)
+	DeleteProject(context.Context, string) error
 	GetFlakyTests(context.Context, string, string, int) ([]FlakyTest, error)
 	GetSlowestTests(context.Context, string, string, int) ([]SlowTest, error)
 	PruneTestOutputs(context.Context, time.Time) (int64, error)
@@ -372,6 +373,15 @@ func (s *SQLStore) GetProjectBySlug(ctx context.Context, slug string) (Project, 
 	}
 	project.CreatedAt = parseTime(createdAt)
 	return project, nil
+}
+
+func (s *SQLStore) DeleteProject(ctx context.Context, slug string) error {
+	project, err := s.GetProjectBySlug(ctx, slug)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.ExecContext(ctx, s.rebind(`DELETE FROM projects WHERE id = ?`), project.ID)
+	return err
 }
 
 func (s *SQLStore) GetProjectCredential(ctx context.Context, slug, username string) (ProjectCredential, error) {

@@ -39,6 +39,9 @@ func Run(ctx context.Context, args []string) error {
 	defer repository.Close()
 
 	switch command {
+	case "help", "-h", "--help":
+		printUsage()
+		return nil
 	case "serve":
 		if cfg.AutoMigrate {
 			if err := repository.Migrate(ctx); err != nil {
@@ -80,12 +83,14 @@ func runProjectCommand(ctx context.Context, repository store.Repository, args []
 	switch args[0] {
 	case "create":
 		return projectCreate(ctx, repository, args[1:])
+	case "delete":
+		return projectDelete(ctx, repository, args[1:])
 	case "rotate-password":
 		return projectRotatePassword(ctx, repository, args[1:])
 	case "list":
 		return projectList(ctx, repository)
 	default:
-		return fmt.Errorf("%w: unknown project subcommand %q", ErrUsage, args[0])
+		return fmt.Errorf("%w: unknown project subcommand %q; run 'testrr help' for usage", ErrUsage, args[0])
 	}
 }
 
@@ -152,6 +157,23 @@ func projectRotatePassword(ctx context.Context, repository store.Repository, arg
 	return repository.RotateProjectCredential(ctx, slug, username, hashed)
 }
 
+func projectDelete(ctx context.Context, repository store.Repository, args []string) error {
+	fs := flag.NewFlagSet("project delete", flag.ContinueOnError)
+	var slug string
+	fs.StringVar(&slug, "slug", "", "project slug")
+	if err := fs.Parse(args); err != nil {
+		return fmt.Errorf("%w: %v", ErrUsage, err)
+	}
+	if slug == "" {
+		return fmt.Errorf("%w: project delete requires --slug", ErrUsage)
+	}
+	if err := repository.DeleteProject(ctx, slug); err != nil {
+		return err
+	}
+	fmt.Printf("project %s deleted\n", slug)
+	return nil
+}
+
 func projectList(ctx context.Context, repository store.Repository) error {
 	projects, err := repository.ListProjects(ctx)
 	if err != nil {
@@ -174,7 +196,7 @@ func runStorageCommand(ctx context.Context, repository store.Repository, cfg con
 	case "prune":
 		return storagePrune(ctx, repository, cfg, args[1:])
 	default:
-		return fmt.Errorf("%w: unknown storage subcommand %q", ErrUsage, args[0])
+		return fmt.Errorf("%w: unknown storage subcommand %q; run 'testrr help' for usage", ErrUsage, args[0])
 	}
 }
 
@@ -232,6 +254,22 @@ func storagePrune(ctx context.Context, repository store.Repository, cfg config.C
 	}
 
 	return nil
+}
+
+func printUsage() {
+	fmt.Fprint(os.Stderr, `Usage: testrr <command> [options]
+
+Commands:
+  serve                     Start the HTTP server (default)
+  migrate                   Run database migrations
+  project create            Create a new project
+  project delete            Delete a project and all its data
+  project list              List all projects
+  project rotate-password   Rotate project credentials
+  storage compact           Compact the database (VACUUM)
+  storage prune             Prune old test outputs and runs
+  help                      Show this help message
+`)
 }
 
 func readPassword() (string, error) {

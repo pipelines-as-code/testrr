@@ -814,6 +814,83 @@ func TestSQLStoreMigrateBackfillsLegacyOutputs(t *testing.T) {
 	}
 }
 
+func TestSQLStoreDeleteProjectCascades(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	repo := newTestStore(t)
+	defer repo.Close()
+
+	if err := repo.Migrate(ctx); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+
+	project, err := repo.CreateProject(ctx, CreateProjectInput{
+		ID:           "project-delete",
+		Slug:         "deleteme",
+		Name:         "Delete Me",
+		Username:     "demo",
+		PasswordHash: "hash",
+		CreatedAt:    time.Now().UTC(),
+	})
+	if err != nil {
+		t.Fatalf("create project: %v", err)
+	}
+
+	run := Run{
+		ID:             "run-delete",
+		ProjectID:      project.ID,
+		Branch:         "main",
+		RunLabel:       "delete-run",
+		Status:         "complete",
+		StartedAt:      time.Now().UTC(),
+		UploadedAt:     time.Now().UTC(),
+		TotalCount:     1,
+		PassedCount:    1,
+		DurationMillis: 10,
+	}
+	if _, err := repo.CreateRun(ctx, CreateRunInput{
+		Run: run,
+		TestResults: []TestResult{{
+			ID:        "result-delete",
+			RunID:     run.ID,
+			ProjectID: project.ID,
+			TestKey:   "pkg::suite::TestGone",
+			SuiteName: "suite",
+			ClassName: "suite",
+			TestName:  "TestGone",
+			Status:    "passed",
+		}},
+	}); err != nil {
+		t.Fatalf("create run: %v", err)
+	}
+
+	if err := repo.DeleteProject(ctx, "deleteme"); err != nil {
+		t.Fatalf("delete project: %v", err)
+	}
+
+	_, err = repo.GetProjectBySlug(ctx, "deleteme")
+	if err != ErrNotFound {
+		t.Fatalf("expected ErrNotFound after delete, got %v", err)
+	}
+
+	var runCount int
+	if err := repo.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM runs WHERE project_id = ?`, project.ID).Scan(&runCount); err != nil {
+		t.Fatalf("count runs: %v", err)
+	}
+	if runCount != 0 {
+		t.Fatalf("expected cascaded run deletion, got %d", runCount)
+	}
+
+	var resultCount int
+	if err := repo.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM test_results WHERE project_id = ?`, project.ID).Scan(&resultCount); err != nil {
+		t.Fatalf("count test results: %v", err)
+	}
+	if resultCount != 0 {
+		t.Fatalf("expected cascaded test result deletion, got %d", resultCount)
+	}
+}
+
 func newTestStore(t *testing.T) *SQLStore {
 	t.Helper()
 	repo, err := Open(context.Background(), filepath.Join(t.TempDir(), "testrr.sqlite"))
